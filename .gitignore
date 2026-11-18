@@ -1,0 +1,12 @@
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+.venv/
+__pycache__/
+*.pyc
+/build/
+/dist/
+/Mods/
+/UserData/RedlineSkinMap.gz

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS</GameDir>
+    <LoaderDir>$(GameDir)\MelonLoader</LoaderDir>
+    <ManagedDir>$(LoaderDir)\Managed</ManagedDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Numerics" />
+    <Reference Include="$(LoaderDir)\MelonLoader.dll;$(LoaderDir)\0Harmony.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\Assembly-CSharp.dll;$(ManagedDir)\UnhollowerBaseLib.dll;$(ManagedDir)\Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.CoreModule.dll;$(ManagedDir)\UnityEngine.PhysicsModule.dll;$(ManagedDir)\UnityEngine.AnimationModule.dll;$(ManagedDir)\UnityEngine.InputLegacyModule.dll" Private="false" />
+  </ItemGroup>
+</Project>
