@@ -8,27 +8,17 @@ internal static class CutBoundary
 {
     public static int[][] Find(int[][] submeshes, byte[] labels, int[] welded, int parts)
     {
-        var edges = new Dictionary<(int, int), Edge>();
-        foreach (var indices in submeshes)
-        {
-            for (int i = 0; i < indices.Length; i += 3)
-            {
-                int a = indices[i], b = indices[i + 1], c = indices[i + 2];
-                if (welded[a] == welded[b] || welded[b] == welded[c] || welded[c] == welded[a])
-                    continue;
-                bool kept = (parts & (1 << Owner(labels, a, b, c))) != 0;
-                Add(a, b, kept);
-                Add(b, c, kept);
-                Add(c, a, kept);
-            }
-        }
+        var removedEdges = new HashSet<(int, int)>();
+        var seams = new Dictionary<(int, int), (int A, int B)>();
+        Scan(kept: false);
+        if (removedEdges.Count == 0)
+            return Array.Empty<int[]>();
+        Scan(kept: true);
 
         var neighbors = new Dictionary<int, List<int>>();
         var vertices = new Dictionary<int, int>();
-        foreach (var pair in edges)
+        foreach (var pair in seams)
         {
-            if (!pair.Value.Kept || !pair.Value.Removed)
-                continue;
             var (a, b) = pair.Key;
             Connect(a, b);
             Connect(b, a);
@@ -36,6 +26,47 @@ internal static class CutBoundary
             vertices[b] = pair.Value.B;
         }
 
+        return TraceLoops(neighbors, vertices);
+
+        void Scan(bool kept)
+        {
+            foreach (var indices in submeshes)
+            {
+                for (int i = 0; i < indices.Length; i += 3)
+                {
+                    int a = indices[i], b = indices[i + 1], c = indices[i + 2];
+                    if (welded[a] == welded[b] || welded[b] == welded[c] || welded[c] == welded[a])
+                        continue;
+                    if (((parts & (1 << Owner(labels, a, b, c))) != 0) != kept)
+                        continue;
+                    Add(a, b, kept);
+                    Add(b, c, kept);
+                    Add(c, a, kept);
+                }
+            }
+        }
+
+        void Add(int a, int b, bool kept)
+        {
+            if (welded[a] > welded[b])
+                (a, b) = (b, a);
+            var key = (welded[a], welded[b]);
+            if (!kept)
+                removedEdges.Add(key);
+            else if (removedEdges.Contains(key))
+                seams[key] = (a, b);
+        }
+
+        void Connect(int a, int b)
+        {
+            if (!neighbors.TryGetValue(a, out var list))
+                neighbors[a] = list = new List<int>(2);
+            list.Add(b);
+        }
+    }
+
+    public static int[][] TraceLoops(Dictionary<int, List<int>> neighbors, Dictionary<int, int> vertices)
+    {
         var visited = new HashSet<int>();
         var loops = new List<int[]>();
         foreach (int start in neighbors.Keys)
@@ -57,22 +88,6 @@ internal static class CutBoundary
                 loops.Add(loop.ToArray());
         }
         return loops.ToArray();
-
-        void Add(int a, int b, bool kept)
-        {
-            if (welded[a] > welded[b])
-                (a, b) = (b, a);
-            var key = (welded[a], welded[b]);
-            edges.TryGetValue(key, out var edge);
-            edges[key] = kept ? new Edge(a, b, true, edge.Removed) : edge with { Removed = true };
-        }
-
-        void Connect(int a, int b)
-        {
-            if (!neighbors.TryGetValue(a, out var list))
-                neighbors[a] = list = new List<int>(2);
-            list.Add(b);
-        }
     }
 
     public static int Owner(byte[] labels, int i, int j, int k)
@@ -148,5 +163,4 @@ internal static class CutBoundary
         }
     }
 
-    private readonly record struct Edge(int A, int B, bool Kept, bool Removed);
 }

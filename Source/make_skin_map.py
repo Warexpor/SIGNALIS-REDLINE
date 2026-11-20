@@ -30,9 +30,12 @@ def main(game, output):
         if obj.type.name != "SkinnedMeshRenderer":
             continue
         renderer = obj.read()
-        if not renderer.m_Mesh or len(renderer.m_Bones) < 40:
+        if not renderer.m_Mesh or not renderer.m_Bones:
             continue
         reader = renderer.m_Mesh.deref()
+        # The Kolibri body has the same limb roots on a compact 21-bone rig.
+        if len(renderer.m_Bones) < 40 and reader.peek_name() != "KLBR_Body":
+            continue
         identity = (reader.assets_file.name, reader.path_id)
         if identity in visited:
             continue

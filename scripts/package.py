@@ -24,9 +24,9 @@ def main():
 
     source = ROOT / "Source"
     mod_info = (source / "RedlineMod.cs").read_text(encoding="utf-8-sig")
-    match = re.search(r'MelonInfo\(typeof\(Redline\.RedlineMod\), "REDLINE", "([0-9]+\.[0-9]+\.[0-9]+)"', mod_info)
+    match = re.search(r'const string Version = "([0-9]+\.[0-9]+\.[0-9]+)"', mod_info)
     if not match:
-        raise ValueError("Could not read the version from REDLINE's MelonInfo attribute")
+        raise ValueError("Could not read the REDLINE version")
     version = match.group(1)
 
     subprocess.run(
@@ -44,6 +44,13 @@ def main():
         archive.write(skin_map, "UserData/RedlineSkinMap.gz")
         for file in ("LICENSE", "README.md", "requirements.txt", "UserData/Redline.cfg", "scripts/package.py"):
             archive.write(ROOT / file, file)
+        audio = ROOT / "UserData/RedlineAudio"
+        for file in sorted(audio.iterdir()):
+            if file.is_file() and file.suffix in {".md", ".wav"}:
+                archive.write(file, file.relative_to(ROOT).as_posix())
+        for file in sorted((audio / "Gore").glob("*")):
+            if file.is_file() and file.suffix in {".md", ".wav"}:
+                archive.write(file, file.relative_to(ROOT).as_posix())
         for file in sorted(source.iterdir()):
             if file.is_file() and file.suffix in {".cs", ".csproj", ".py"}:
                 archive.write(file, file.relative_to(ROOT).as_posix())
