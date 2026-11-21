@@ -54,11 +54,17 @@ For a custom Steam library, pass the directory containing `SIGNALIS.exe`.
 python scripts/package.py --game-dir "D:\SteamLibrary\steamapps\common\SIGNALIS"
 ```
 
-The script writes `dist/REDLINE-0.3.0.zip` with the DLL, skin map, weapon and gore audio, default config, source, and license. To compile just the DLL against the default Steam installation, run `dotnet build Source/Redline.csproj -c Release`. For a custom location, add `-p:GameDir="D:\Path\To\SIGNALIS"`.
+The script writes `dist/REDLINE-0.3.0.zip` with the DLL, skin map, weapon and gore audio, default config, README, and license. To compile just the DLL against the default Steam installation, run `dotnet build Source/Redline.csproj -c Release`. For a custom location, add `-p:GameDir="D:\Path\To\SIGNALIS"`.
 
 ## Install and configure
 
-With SIGNALIS closed, copy `Mods/Redline.dll`, `UserData/RedlineSkinMap.gz`, and the `UserData/RedlineAudio` directory from the package into the corresponding folders next to `SIGNALIS.exe`. Copy `UserData/Redline.cfg` on first install, or keep your existing config when updating. Move `Mods/Redline.dll` out of `Mods` to disable REDLINE.
+You need the Windows Steam build `20243420` of SIGNALIS with [MelonLoader 0.5.7 x64](https://github.com/LavaGang/MelonLoader/releases/tag/v0.5.7) installed. Launch the game once after installing MelonLoader so it generates its managed assemblies, then close the game.
+
+To install, extract the release zip directly into the folder containing `SIGNALIS.exe` so the `Mods` and `UserData` folders merge with the game's. That gives you `Mods/Redline.dll`, `UserData/RedlineSkinMap.gz`, `UserData/Redline.cfg` (default settings), and the `UserData/RedlineAudio` directory.
+
+To update, extract the new zip the same way but keep your existing `UserData/Redline.cfg` so your settings survive. Back it up first if you want to be safe.
+
+To uninstall, delete `Mods/Redline.dll`. Your saves are untouched. You can also delete `UserData/Redline.cfg`, `UserData/RedlineSkinMap.gz`, `UserData/RedlineAudio`, and `UserData/RedlineAriane` if you want no leftovers, or just move the DLL out of `Mods` to disable REDLINE temporarily.
 
 **Ariane flash** is on by default. The switch under **F9 → Combat** controls both the automatic flash and the F1 preview. Both need images from your local game, extracted with the `Source/extract_ariane.py` script from the repository. Without those images the flash stays off and everything else works. To extract, install the Python dependency from the Build section and run this from the repository root. Substitute your game folder if you use a custom Steam library. The script extracts the images into the game's `UserData/RedlineAriane/` directory. Older installs can still use `UserData/RedlineAriane.png` as a single-image fallback.
 
