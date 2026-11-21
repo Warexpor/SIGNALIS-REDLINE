@@ -42,17 +42,15 @@ def main():
     with ZipFile(package, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
         archive.write(dll, "Mods/Redline.dll")
         archive.write(skin_map, "UserData/RedlineSkinMap.gz")
-        for file in ("LICENSE", "README.md", "requirements.txt", "UserData/Redline.cfg", "scripts/package.py"):
+        for file in ("LICENSE", "README.md", "requirements.txt", "UserData/Redline.cfg"):
             archive.write(ROOT / file, file)
+        archive.write(source / "extract_ariane.py", "Source/extract_ariane.py")
         audio = ROOT / "UserData/RedlineAudio"
         for file in sorted(audio.iterdir()):
             if file.is_file() and file.suffix in {".md", ".wav"}:
                 archive.write(file, file.relative_to(ROOT).as_posix())
         for file in sorted((audio / "Gore").glob("*")):
             if file.is_file() and file.suffix in {".md", ".wav"}:
-                archive.write(file, file.relative_to(ROOT).as_posix())
-        for file in sorted(source.iterdir()):
-            if file.is_file() and file.suffix in {".cs", ".csproj", ".py"}:
                 archive.write(file, file.relative_to(ROOT).as_posix())
 
     print(f"Created {package}")
