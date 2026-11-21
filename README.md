@@ -60,7 +60,7 @@ The script writes `dist/REDLINE-0.3.0.zip` with the DLL, skin map, weapon and go
 
 With SIGNALIS closed, copy `Mods/Redline.dll`, `UserData/RedlineSkinMap.gz`, and the `UserData/RedlineAudio` directory from the package into the corresponding folders next to `SIGNALIS.exe`. Copy `UserData/Redline.cfg` on first install, or keep your existing config when updating. Move `Mods/Redline.dll` out of `Mods` to disable REDLINE.
 
-**Ariane flash** is on by default. The switch under **F9 → Combat** controls both the automatic flash and the F1 preview. Both need images from your local game. Before launching, install the Python dependency above and run this from the extracted package or repository root. Substitute your game folder if you use a custom Steam library. The script extracts the images into the game's `UserData/RedlineAriane/` directory. Older installs can still use `UserData/RedlineAriane.png` as a single-image fallback.
+**Ariane flash** is on by default. The switch under **F9 → Combat** controls both the automatic flash and the F1 preview. Both need images from your local game, extracted with the `Source/extract_ariane.py` script from the repository. Without those images the flash stays off and everything else works. To extract, install the Python dependency from the Build section and run this from the repository root. Substitute your game folder if you use a custom Steam library. The script extracts the images into the game's `UserData/RedlineAriane/` directory. Older installs can still use `UserData/RedlineAriane.png` as a single-image fallback.
 
 ```powershell
 python Source/extract_ariane.py "C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS"
