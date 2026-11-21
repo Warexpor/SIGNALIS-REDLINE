@@ -10,6 +10,7 @@
   <ItemGroup>
     <Reference Include="System.Numerics" />
     <Reference Include="$(LoaderDir)\MelonLoader.dll;$(LoaderDir)\0Harmony.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.AssetBundleModule.dll" Private="false" />
     <Reference Include="$(ManagedDir)\Assembly-CSharp.dll;$(ManagedDir)\Assembly-CSharp-firstpass.dll;$(ManagedDir)\UnhollowerBaseLib.dll;$(ManagedDir)\Il2Cppmscorlib.dll" Private="false" />
     <Reference Include="$(ManagedDir)\FMODUnity.dll" Private="false" />
     <Reference Include="$(ManagedDir)\AstarPathfindingProject.dll" Private="false" />

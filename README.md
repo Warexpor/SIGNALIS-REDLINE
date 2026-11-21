@@ -66,11 +66,7 @@ To update, extract the new zip the same way but keep your existing `UserData/Red
 
 To uninstall, delete `Mods/Redline.dll`. Your saves are untouched. You can also delete `UserData/Redline.cfg`, `UserData/RedlineSkinMap.gz`, `UserData/RedlineAudio`, and `UserData/RedlineAriane` if you want no leftovers, or just move the DLL out of `Mods` to disable REDLINE temporarily.
 
-**Ariane flash** is on by default. The switch under **F9 → Combat** controls both the automatic flash and the F1 preview. Both need images from your local game, extracted with the `Source/extract_ariane.py` script from the repository. Without those images the flash stays off and everything else works. To extract, install the Python dependency from the Build section and run this from the repository root. Substitute your game folder if you use a custom Steam library. The script extracts the images into the game's `UserData/RedlineAriane/` directory. Older installs can still use `UserData/RedlineAriane.png` as a single-image fallback.
-
-```powershell
-python Source/extract_ariane.py "C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS"
-```
+**Ariane flash** is on by default. The switch under **F9 → Combat** controls both the automatic flash and the F1 preview. On first launch the mod reads the six portraits from your installed game files and caches them in the game's `UserData/RedlineAriane/` directory, so there is nothing to set up. Older installs can still use `UserData/RedlineAriane.png` as a single-image fallback.
 
 Press **F9** at the title screen, during gameplay, or from the pause menu to open REDLINE's settings. Click a tab or press **Tab** to switch sections. Use **Up** and **Down** to select a row and **Left** and **Right** to adjust it, or use the mouse. Close with **F9**, **Esc**, or **Save & Close** to save the settings to `UserData/Redline.cfg`. Opening the panel during gameplay pauses the game until you close it.
 

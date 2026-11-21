@@ -20,6 +20,7 @@ public sealed partial class RedlineMod
     {
         try
         {
+            EnsureArianeCache();
             string directory = Path.Combine("UserData", "RedlineAriane");
             string[] files = Array.FindAll(Array.ConvertAll(ArianeFrameNames,
                 name => Path.Combine(directory, name + ".png")), File.Exists);
