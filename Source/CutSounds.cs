@@ -9,23 +9,38 @@ namespace Redline;
 
 internal sealed class CutSounds(RedlineSettings settings, Func<ChannelGroup> output, Action<string> log)
 {
-    private const string Bank = "DET";
-    private const string Chop = "event:/Enemy/EULR/ChopMeat";
-    private static readonly string[] foleyNames = { "impact", "sever", "stomp" };
-    private readonly List<Sound>[] foley = { new(2), new(2), new(2) };
-    private readonly int[] lastTake = { -1, -1, -1 };
-    private readonly bool[] scanned = new bool[3];
+    private const int Impact = 0;
+    private const int Sever = 1;
+    private const int HeavyCut = 2;
+    private const int Bleed = 3;
+    private const int StompImpact = 4;
+    private const int Join = 5;
+    private static readonly string[] foleyNames = { "impact", "sever", "stomp", "bleed", "stomp-impact", "join" };
+    private readonly List<Sound>[] foley = { new(2), new(2), new(2), new(2), new(3), new(2) };
+    private readonly int[] lastTake = { -1, -1, -1, -1, -1, -1 };
+    private readonly bool[] scanned = new bool[foleyNames.Length];
     private readonly System.Random variation = new();
     private int warmIndex;
-    private bool attempted;
-    private bool loaded;
     private float lastCut = float.NegativeInfinity;
     private float lastImpact = float.NegativeInfinity;
-    private int previousPitch = -1;
+    private float lastBleed = float.NegativeInfinity;
 
-    public void Play(Vector3 point, bool stomp) => Play(point, stomp, false);
+    public void Play(Vector3 point, bool stomp)
+    {
+        if (stomp)
+        {
+            if (!PlayCut(StompImpact, point, 0.68f, 0.96f))
+                PlayCut(HeavyCut, point, 0.68f, 0.94f);
+        }
+        else if (Time.time - lastCut >= 0.10f)
+            PlayCut(Sever, point, 0.65f, 0.95f);
+    }
 
-    public void PlayReassembly(Vector3 point) => Play(point, false, true);
+    public void PlayReassembly(Vector3 point)
+    {
+        if (Time.time - lastCut >= 0.10f && !PlayCut(Join, point, 0.36f, 1f))
+            PlayCut(Sever, point, 0.36f, 1.07f);
+    }
 
     public void Warmup()
     {
@@ -36,67 +51,33 @@ internal sealed class CutSounds(RedlineSettings settings, Func<ChannelGroup> out
     public void PlayImpact(Vector3 point, bool heavy)
     {
         float gain = RedlineSettings.Factor(settings.CutVolume);
-        if (gain <= 0 || Time.time - lastImpact < 0.115f || Time.time - lastCut < 0.075f)
+        if (gain <= 0 || Time.time - lastImpact < 0.10f)
             return;
-        if (PlayFoley(0, point, (heavy ? 0.44f : 0.32f) * gain, 1f))
+        if (PlayFoley(Impact, point, (heavy ? 0.42f : 0.32f) * gain, 1f))
             lastImpact = Time.time;
     }
 
-    public void PlayHeavyCut(Vector3 point)
+    public bool PlayBleed(Vector3 point, float pressure)
     {
         float gain = RedlineSettings.Factor(settings.CutVolume);
-        if (gain <= 0)
-            return;
-        if (PlayFoley(2, point, 0.78f * gain, 0.89f))
-            lastCut = Time.time;
-        else
-            Play(point, stomp: false);
+        if (gain <= 0 || pressure < 0.28f || Time.time - lastBleed < 0.90f
+            || Time.time - lastImpact < 0.21f || Time.time - lastCut < 0.23f)
+            return false;
+        if (!PlayFoley(Bleed, point, Mathf.Lerp(0.08f, 0.16f, pressure) * gain, 1f))
+            return false;
+        lastBleed = Time.time;
+        return true;
     }
 
-    private void Play(Vector3 point, bool stomp, bool joining)
+    public void PlayHeavyCut(Vector3 point) => PlayCut(HeavyCut, point, 0.78f, 0.89f);
+
+    private bool PlayCut(int cue, Vector3 point, float volume, float pitch)
     {
         float gain = RedlineSettings.Factor(settings.CutVolume);
-        if (gain <= 0 || !stomp && Time.time - lastCut < 0.10f)
-            return;
-        if (!joining && PlayFoley(stomp ? 2 : 1, point, (stomp ? 0.68f : 0.78f) * gain, stomp ? 0.94f : 1f))
-        {
-            lastCut = Time.time;
-            return;
-        }
-        try
-        {
-            var listener = PlayerAttack.instance;
-            float distance = listener ? Vector3.Distance(listener.transform.position, point) : 0;
-            float volume = joining
-                ? 0.72f * (1f - Mathf.InverseLerp(8f, 26f, distance)) * gain
-                : (stomp ? 2.65f : 2.25f) * (1f - 0.68f * Mathf.InverseLerp(9f, 45f, distance)) * gain;
-            if (volume <= 0)
-                return;
-            lastCut = Time.time;
-            if (!attempted)
-            {
-                attempted = true;
-                // Keep our own bank reference so the cut remains available after room changes.
-                RuntimeManager.LoadBank(Bank);
-                loaded = RuntimeManager.HasBankLoaded(Bank);
-            }
-            if (!loaded)
-                return;
-            // Reuse the stock event at three nearby pitches and avoid consecutive repeats.
-            int pitchIndex = previousPitch < 0 ? variation.Next(3) : (previousPitch + 1 + variation.Next(2)) % 3;
-            previousPitch = pitchIndex;
-            float pitch = (joining ? 1.02f : stomp ? 0.82f : 0.88f) + pitchIndex * 0.055f;
-            var sound = RuntimeManager.CreateInstance(Chop);
-            try
-            {
-                RESULT gainResult = sound.setVolume(volume);
-                sound.setPitch(pitch);
-                RESULT result = sound.start();
-                log($"{(joining ? "reassembly sound" : stomp ? "stomp crunch" : "cut sound")} event={Chop} volume={volume:F2} pitch={pitch:F2} distance={distance:F1} gain={gainResult} result={result}");
-            }
-            finally { sound.release(); }
-        }
-        catch (Exception error) { log($"cut sound error: {error}"); }
+        if (gain <= 0 || !PlayFoley(cue, point, volume * gain, pitch))
+            return false;
+        lastCut = Time.time;
+        return true;
     }
 
     private void LoadFoley(int kind)
@@ -104,7 +85,8 @@ internal sealed class CutSounds(RedlineSettings settings, Func<ChannelGroup> out
         if (scanned[kind])
             return;
         scanned[kind] = true;
-        for (int take = 1; take <= 2; take++)
+        int takeCount = kind == StompImpact ? 3 : 2;
+        for (int take = 1; take <= takeCount; take++)
         {
             string filename = $"{foleyNames[kind]}-{take}.wav";
             string path = Path.GetFullPath(Path.Combine("UserData", "RedlineAudio", "Gore", filename));
@@ -142,15 +124,17 @@ internal sealed class CutSounds(RedlineSettings settings, Func<ChannelGroup> out
             var result = RuntimeManager.CoreSystem.playSound(takes[index], foleyOutput, true, out var voice);
             if (result != RESULT.OK)
                 return false;
+            float spread = kind == StompImpact ? 0.08f : 0.05f;
+            float playbackPitch = pitch * (1f + spread * (2f * (float)variation.NextDouble() - 1f));
             if (voice.setVolume(volume) != RESULT.OK || voice.setPan(pan) != RESULT.OK ||
-                voice.setPitch(pitch * (0.95f + 0.10f * (float)variation.NextDouble())) != RESULT.OK ||
+                voice.setPitch(playbackPitch) != RESULT.OK ||
                 voice.setPaused(false) != RESULT.OK)
             {
                 voice.stop();
                 return false;
             }
             lastTake[kind] = index;
-            log($"gore sound cue={foleyNames[kind]} take={index + 1} distance={distance:F1} pan={pan:F2}");
+            log($"gore sound cue={foleyNames[kind]} take={index + 1} pitch={playbackPitch:F3} distance={distance:F1} pan={pan:F2}");
             return true;
         }
         catch (Exception error)
@@ -169,10 +153,5 @@ internal sealed class CutSounds(RedlineSettings settings, Func<ChannelGroup> out
                     sound.release();
             takes.Clear();
         }
-        if (!loaded)
-            return;
-        try { RuntimeManager.UnloadBank(Bank); }
-        catch (Exception error) { log($"cut sound bank release: {error}"); }
-        loaded = false;
     }
 }

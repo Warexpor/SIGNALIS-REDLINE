@@ -56,7 +56,7 @@ internal sealed class ShotHitboxes(Func<EnemyController, EnemyEffects> tracked)
             if (!nativeCollider)
                 continue;
             if (!hitsSurface && target.state != EnemyController.enemystate.dead && target.hitbox.HP > 0
-                && (effects?.HasCrawlPose == true
+                && (effects?.HasGroundAimPose == true
                     || target.staggerType is EnemyController.hurtState.critical or EnemyController.hurtState.fire))
             {
                 // Lock-on can continue aiming above a prone model. Retain the native hitbox if the exact ray misses.

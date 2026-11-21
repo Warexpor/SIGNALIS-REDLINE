@@ -10,10 +10,11 @@
   <ItemGroup>
     <Reference Include="System.Numerics" />
     <Reference Include="$(LoaderDir)\MelonLoader.dll;$(LoaderDir)\0Harmony.dll" Private="false" />
-    <Reference Include="$(ManagedDir)\Assembly-CSharp.dll;$(ManagedDir)\UnhollowerBaseLib.dll;$(ManagedDir)\Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\Assembly-CSharp.dll;$(ManagedDir)\Assembly-CSharp-firstpass.dll;$(ManagedDir)\UnhollowerBaseLib.dll;$(ManagedDir)\Il2Cppmscorlib.dll" Private="false" />
     <Reference Include="$(ManagedDir)\FMODUnity.dll" Private="false" />
     <Reference Include="$(ManagedDir)\AstarPathfindingProject.dll" Private="false" />
     <Reference Include="$(ManagedDir)\UnityEngine.CoreModule.dll;$(ManagedDir)\UnityEngine.PhysicsModule.dll;$(ManagedDir)\UnityEngine.AnimationModule.dll;$(ManagedDir)\UnityEngine.InputLegacyModule.dll" Private="false" />
-    <Reference Include="$(ManagedDir)\UnityEngine.IMGUIModule.dll;$(ManagedDir)\UnityEngine.TextRenderingModule.dll;$(ManagedDir)\UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.IMGUIModule.dll;$(ManagedDir)\UnityEngine.ImageConversionModule.dll;$(ManagedDir)\UnityEngine.TextRenderingModule.dll;$(ManagedDir)\UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.UIModule.dll" Private="false" />
   </ItemGroup>
 </Project>

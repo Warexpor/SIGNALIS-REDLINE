@@ -31,7 +31,7 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
     private float playerFloor;
 
     public float SimulatedTimeThisFrame { get; private set; }
-    public Footstep PlayerStep { get; private set; }
+    private Footstep PlayerStep { get; set; }
     public RagdollTuning LaunchTuning => new(settings.ExtremeRagdoll.Value, RedlineSettings.Factor(settings.ThrowSpeed),
         RedlineSettings.Factor(settings.Lift), RedlineSettings.Factor(settings.Spin));
 
@@ -205,7 +205,7 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
             while (time >= Step)
             {
                 foreach (var (body, _) in bodies)
-                    if (body && !body.IsSleeping())
+                    if (body && !body.isKinematic && !body.IsSleeping())
                         body.AddForce(Battlefield.Down * Gravity, ForceMode.Acceleration);
                 physics.Simulate(Step);
                 time -= Step;
@@ -409,6 +409,12 @@ internal sealed class DetachedLimb(EffectsPhysics physics, GameObject body, Game
 
     public Vector3 PointVelocity(Vector3 point) => rigid ? rigid.GetPointVelocity(point) : Vector3.zero;
 
+    public void SetKinematic(bool enabled)
+    {
+        if (rigid)
+            rigid.isKinematic = enabled;
+    }
+
     public void Kick(Vector3 velocity, Vector3 point)
     {
         if (!rigid)
@@ -431,7 +437,7 @@ internal sealed class DetachedLimb(EffectsPhysics physics, GameObject body, Game
         if (drive.sqrMagnitude < 0.01f || DebrisContact.LimitTravel(contact.Center, drive * 0.05f, floorHeight, contact.Radius) == Vector3.zero)
             return;
         contactTime = quietTime = 0;
-        DebrisContact.PushRigid(rigid, drive * (Visual == Body ? 0.58f : 1.0f));
+        DebrisContact.PushRigid(rigid, drive);
     }
 
     public void SlideOnFloor(Footstep foot)
@@ -551,7 +557,7 @@ internal sealed class DetachedLimb(EffectsPhysics physics, GameObject body, Game
             center = bounds.center;
         }
         parkedFloor = rigid ? Battlefield.FloorBelow(center, floorHeight) : floorHeight;
-        var snap = Battlefield.Up * (visualDepth + parkedFloor - floorHeight + 0.02f);
+        var snap = Battlefield.Up * (visualDepth + parkedFloor - floorHeight + 0.008f);
         Visual.transform.position += snap;
         parkedContact = Footprint(center + snap, Visual.transform.rotation);
         parked = true;
@@ -649,8 +655,6 @@ internal sealed class BodyRagdoll
     private int relaxationPasses;
     private bool torsoOnFloor;
     private bool simulating = true;
-    private Vector3 slideOffset;
-    private GroundSlide slide;
 
     public static BodyRagdoll Start(Rig rig, EffectsPhysics physics, Vector3 hit, Vector3? point, Vector3 facing,
         float ground, int missing, float strength, bool rifle, bool stomp, Action<string> log, bool collapse = false)
@@ -852,7 +856,7 @@ internal sealed class BodyRagdoll
     public bool IsSimulating => simulating;
     public Rig.Snapshot Snapshot => startPose;
     private Vector3 HipsPosition => simulating ? links[0].Body.position : settled[0].Position;
-    public Vector3 PlanarTravel => Battlefield.OnPlane(HipsPosition - startPose.HipsPosition + slideOffset);
+    public Vector3 PlanarTravel => Battlefield.OnPlane(HipsPosition - startPose.HipsPosition);
     public string Diagnostics => $"links={links.Count} floor={floorHeight:F3} hips={Battlefield.Format(HipsPosition)} landed={Landed} quiet={quietTime:F3}";
 
     public void Tick()
@@ -998,65 +1002,6 @@ internal sealed class BodyRagdoll
     }
 
     private bool TouchesFloor(Collider shape) => shape.bounds.max.z + floorHeight > -0.18f;
-
-    public Vector3 Nudge(Footstep foot, float correction, float surface)
-    {
-        if (!foot.Moving && !slide.Moving)
-            return Vector3.zero;
-        Vector3 visualOffset = slideOffset + Battlefield.Up * correction;
-        if (foot.Moving && !slide.Moving &&
-            Battlefield.OnPlane(foot.End - HipsPosition - visualOffset).sqrMagnitude > 12f * 12f)
-            return Vector3.zero;
-
-        Vector3 drive = Vector3.zero;
-        Link contacted = null;
-        float nearest = float.PositiveInfinity;
-        if (foot.Moving)
-        {
-            for (int i = 0; i < links.Count; i++)
-            {
-                var contact = ContactAt(i, visualOffset);
-                var candidate = foot.Push(contact);
-                float distance = Battlefield.OnPlane(contact.Center - foot.End).sqrMagnitude;
-                if (candidate.sqrMagnitude <= 0.01f || distance >= nearest)
-                    continue;
-                drive = candidate * 0.72f;
-                nearest = distance;
-                contacted = links[i];
-            }
-        }
-        if (simulating)
-        {
-            if (contacted != null && DebrisContact.LimitTravel(contacted.Body.position, drive * 0.06f,
-                surface, contacted.Radius) != Vector3.zero)
-                DebrisContact.PushRigid(contacted.Body, drive);
-            return Vector3.zero;
-        }
-
-        var move = slide.Advance(drive, 17f);
-        if (move == Vector3.zero)
-            return Vector3.zero;
-        // Each grounded link constrains travel so a torso or long limb cannot slide through a wall.
-        for (int i = 0; i < links.Count && move != Vector3.zero; i++)
-        {
-            var contact = ContactAt(i, visualOffset);
-            var front = Vector3.Dot(contact.End - contact.Start, move) > 0 ? contact.End : contact.Start;
-            move = DebrisContact.LimitTravel(front, move, surface, contact.Radius);
-        }
-        if (move == Vector3.zero)
-            slide.Stop();
-        slideOffset += move;
-        return move;
-    }
-
-    private DebrisContact ContactAt(int index, Vector3 offset)
-    {
-        var link = links[index];
-        var position = simulating ? link.Body.position : settled[index].Position;
-        var rotation = simulating ? link.Body.rotation : settled[index].Rotation * Quaternion.Inverse(link.Offset);
-        var axis = rotation * Vector3.up;
-        return DebrisContact.Around(position + offset + axis * link.Center, axis * link.Span, link.Radius);
-    }
 
     public void Pose()
     {

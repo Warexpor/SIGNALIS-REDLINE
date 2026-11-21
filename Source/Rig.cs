@@ -163,6 +163,23 @@ internal sealed class Rig
         Hips.SetPositionAndRotation(snapshot.HipsPosition, snapshot.HipsRotation);
     }
 
+    public void BlendFrom(Snapshot snapshot, float weight)
+    {
+        var hipsPosition = Vector3.Lerp(snapshot.HipsPosition, Hips.position, weight);
+        var hipsRotation = Quaternion.Slerp(snapshot.HipsRotation, Hips.rotation, weight);
+        foreach (var pose in snapshot.Bones)
+        {
+            var bone = pose.Bone;
+            if (!bone || bone == Hips)
+                continue;
+            Remember(bone);
+            bone.localPosition = Vector3.Lerp(pose.Position, bone.localPosition, weight);
+            bone.localRotation = Quaternion.Slerp(pose.Rotation, bone.localRotation, weight);
+        }
+        Remember(Hips);
+        Hips.SetPositionAndRotation(hipsPosition, hipsRotation);
+    }
+
     public Vector3 Swipe(Part arm, Vector3 forward, float sweep, float weight, bool crawling, float floor)
     {
         bool left = arm == Part.LeftArm;

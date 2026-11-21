@@ -8,6 +8,8 @@ internal sealed class StumpBleed(float started, bool heavy)
     private float nextPulse = started + 0.20f;
     private float downedAt = float.PositiveInfinity;
 
+    public bool PlayedSound;
+
     public bool Finished(float now) => now - started >= duration || now - downedAt >= 6.8f;
 
     public float Pulse(float now, bool downed, float movement)

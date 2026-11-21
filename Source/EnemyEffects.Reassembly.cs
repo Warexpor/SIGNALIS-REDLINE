@@ -7,7 +7,8 @@ internal sealed partial class EnemyEffects
 {
     private readonly List<SeveredPart> severedParts = new(4);
     private readonly List<LimbReturn> returningParts = new(4);
-    private bool awaitingRevival;
+    private bool awaitingCorpseRevival;
+    public bool ForcingCorpseRevival { get; private set; }
 
     private bool ReassemblyEnabled => settings.Dismember.Value && settings.Reassemble.Value;
 
@@ -24,9 +25,9 @@ internal sealed partial class EnemyEffects
         severed.Limb.Injury = severed;
     }
 
-    public bool RestoreRetainedInjuries(IEnumerable<SeveredPart> injuries)
+    public bool RestoreRetainedInjuries(IEnumerable<SeveredPart> injuries, bool loadedAsCorpse)
     {
-        if (!ReassemblyEnabled || missing != 0)
+        if (!settings.Dismember.Value || missing != 0)
             return false;
         foreach (var severed in injuries)
         {
@@ -44,32 +45,33 @@ internal sealed partial class EnemyEffects
         ForceAnimation();
         foreach (var skin in skins)
             skin.ShowMissingParts(missing);
-        downed = awaitingRevival = true;
+        downed = IsCorpse(Target);
+        awaitingCorpseRevival |= loadedAsCorpse;
         log($"revival injuries recovered on room load missing=0x{missing:X}");
         return true;
     }
 
     public bool PrepareRevivalReset()
     {
-        if (!ReassemblyEnabled || severedParts.Count == 0 || Target.permadeath
-            || (!awaitingRevival && !downed && !NativeDowned && !Target.queuedForRespawn
-                && Target.state != EnemyController.enemystate.dead))
-            return false;
-        awaitingRevival = true;
-        return true;
+        ObserveCorpse();
+        return awaitingCorpseRevival || severedParts.Count != 0 && NativeDowned;
     }
 
-    public static bool CanForceRevival(EnemyController target)
+    // Loaded corpses can already have revival HP. Critical actors retain a living state.
+    public static bool IsCorpse(EnemyController target) =>
+        target.state == EnemyController.enemystate.dead;
+
+    public void ObserveCorpse()
     {
-        if (!target || !target.isActiveAndEnabled || !target.hitbox || !target.animator || !target.Preset
-            || target.permadeath || target.staggerType == EnemyController.hurtState.fire || !IsSupported(target))
-            return false;
-        // Critical consumes a revive and restores HP while the actor is still on the floor.
-        if (target.staggerType == EnemyController.hurtState.critical && target.animator.GetBool(target.anim_Critical))
-            return true;
-        return target.state == EnemyController.enemystate.dead && target.hitbox.HP <= 0
-            && (target.queuedForRespawn || target.revives > 0);
+        if (awaitingCorpseRevival || !IsCorpse(Target))
+            return;
+        awaitingCorpseRevival = true;
+        CancelLimbReturns(settleInPlace: true);
     }
+
+    public static bool CanForceRevival(EnemyController target) =>
+        target && target.isActiveAndEnabled && target.animator && target.Preset
+        && target.hitbox && target.agent && IsCorpse(target);
 
     public bool HasReachableLimb()
     {
@@ -87,9 +89,23 @@ internal sealed partial class EnemyEffects
     {
         if (!CanForceRevival(Target))
             return false;
-        PrepareRevivalReset();
-        // Cancel the in-progress Critical coroutine before performing its get-up cleanup.
+        ObserveCorpse();
+        var nativeCorpse = ragdoll == null && waistSplit == null && crawlDeathPose == null ? rig.Capture() : null;
+        ForcingCorpseRevival = true;
+        try { Target.ResetEnemy(); }
+        finally { ForcingCorpseRevival = false; }
+        if (IsCorpse(Target) || Target.hitbox.HP <= 0)
+            return false;
+
+        // The debug reset overrides terminal deaths only for the selected corpse.
+        fatalCut = MajorCut.None;
+        crawlKilled = enteredCrawl = false;
+        forcedRevivalPose = nativeCorpse;
+        downed = true; // Release the corpse pose and ragdoll through the normal revival tick.
+        Target.permadeath = false;
         Target.StopAllCoroutines();
+        Target.animator.ResetTrigger(Target.anim_Fall);
+        Target.animator.ResetTrigger(Target.anim_LoadDead);
         Target.queuedForRespawn = false;
         if (Target.stompInter)
         {
@@ -98,11 +114,38 @@ internal sealed partial class EnemyEffects
         }
         if (Target.downedHitbox)
             Target.downedHitbox.SetActive(false);
-        Target.ResetEnemy();
-        if (Target.state == EnemyController.enemystate.dead || Target.hitbox.HP <= 0)
-            return false;
-        log($"revival test forced hp={Target.hitbox.HP}");
+        ClearBurnEffect();
+        var manager = Target.GetComponentInParent<EnemyManager>();
+        if (manager && manager.enemies != null && manager.dead?.Remove(Target) == true)
+        {
+            if (!manager.enemies.Contains(Target))
+                manager.enemies.Add(Target);
+            manager.cleared = false;
+        }
+        log($"revival test forced from corpse hp={Target.hitbox.HP}");
         return true;
+    }
+
+    private void ClearBurnEffect()
+    {
+        Target.currentBurn = 0;
+        var burn = Target.BurnEffect;
+        if (!burn)
+            return;
+        var overlay = burn._renderer;
+        if (!burn.burning && !(overlay && overlay.enabled))
+            return;
+        burn.StopAllCoroutines();
+        burn.burning = false;
+        if (burn.sfx)
+            burn.sfx.Stop();
+        if (overlay)
+        {
+            overlay.enabled = false;
+            foreach (var material in overlay.materials)
+                if (material && material.HasProperty("_Amount"))
+                    material.SetFloat("_Amount", 0f);
+        }
     }
 
     private bool CanReachSocket(SeveredPart severed, Transform bone, float surface) =>
@@ -111,28 +154,23 @@ internal sealed partial class EnemyEffects
 
     private void ObserveRevival(bool alive)
     {
+        ObserveCorpse();
+        if (!alive || Target.queuedForRespawn || NativeDowned)
+        {
+            CancelLimbReturns(settleInPlace: true);
+            return;
+        }
+        if (!ReassemblyEnabled || Target.permadeath)
+        {
+            awaitingCorpseRevival = false;
+            CancelLimbReturns(settleInPlace: true);
+            return;
+        }
+        if (!awaitingCorpseRevival)
+            return;
+        awaitingCorpseRevival = false;
         if (severedParts.Count == 0)
             return;
-        if (!ReassemblyEnabled || Target.permadeath || Target.staggerType == EnemyController.hurtState.fire)
-        {
-            awaitingRevival = false;
-            CancelLimbReturns(settleInPlace: true);
-            return;
-        }
-
-        // The Critical coroutine clears this animation flag when the get-up starts.
-        // Its hurt state stays critical until the stock get-up delay expires.
-        bool criticalFall = Target.staggerType == EnemyController.hurtState.critical && animator
-            && animator.GetBool(Target.anim_Critical);
-        if (!alive || Target.queuedForRespawn || criticalFall)
-        {
-            awaitingRevival = true;
-            CancelLimbReturns(settleInPlace: true);
-            return;
-        }
-        if (!awaitingRevival)
-            return;
-        awaitingRevival = false;
         float now = Time.time;
         floor = FindFloor();
         foreach (var severed in severedParts)

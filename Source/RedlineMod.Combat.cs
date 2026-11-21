@@ -13,6 +13,8 @@ public sealed partial class RedlineMod
     private ElsterInjuries elsterInjuries;
     private WeaponAudio weaponAudio;
     private RuntimeAnimatorController shotgunRackController;
+    private RuntimeAnimatorController smgReloadController;
+    private bool smgReloadMarkersReady;
 
     private void InstallCombatHooks()
     {
@@ -85,6 +87,8 @@ public sealed partial class RedlineMod
 
     private static void PlayerDamageEnd(int __state, Vector2 __1)
     {
+        try { active.arianeFlash?.Hit(__state, active.ArianeFlashSuppressed); }
+        catch (Exception ex) { active.WarnOnce("Ariane flash damage", ex); }
         try { active.elsterInjuries.Hit(__state, __1); }
         catch (Exception ex) { active.WarnOnce("Elster trauma", ex); }
     }
@@ -97,6 +101,7 @@ public sealed partial class RedlineMod
 
     private static void CombatSaveLoaded()
     {
+        active.arianeFlash?.Reset();
         active.elsterInjuries.SceneChanged(reset: true);
         // Rooms and their enemies may survive a native reload. Their own Load handlers restore their save state.
         active.combatEncounters.SceneChanged();
@@ -152,9 +157,30 @@ public sealed partial class RedlineMod
             catch (Exception ex) { active.WarnOnce("shotgun reload rack", ex); }
             return false;
         }
+        if (__0 != null && __0.StartsWith(WeaponAudio.SmgReloadMarkerPrefix, StringComparison.Ordinal))
+        {
+            try
+            {
+                if (int.TryParse(__0.Substring(WeaponAudio.SmgReloadMarkerPrefix.Length), out int beat))
+                    active.weaponAudio.PlaySmgReloadMarker(beat, __1);
+            }
+            catch (Exception ex) { active.WarnOnce("SMG reload marker", ex); }
+            return false;
+        }
         if (!active.weaponAudio.Replaced(__0))
         {
-            try { return !active.weaponAudio.PlayDryClick(__0, __1) && !active.weaponAudio.PlayHandling(__0); }
+            try
+            {
+                if (__0 == WeaponAudio.SmgReloadEvent)
+                {
+                    bool ready = false;
+                    try { ready = active.PrepareSmgReloadMarkers(); }
+                    catch (Exception ex) { active.WarnOnce("SMG reload markers", ex); }
+                    if (active.weaponAudio.BeginSmgReload(ready))
+                        return false;
+                }
+                return !active.weaponAudio.PlayDryClick(__0, __1) && !active.weaponAudio.PlayHandling(__0);
+            }
             catch (Exception ex) { active.WarnOnce("weapon handling", ex); return true; }
         }
         active.Log($"stock gunshot replaced event={__0}");
@@ -226,6 +252,55 @@ public sealed partial class RedlineMod
             Log($"shotgun reload rack marker time={pump.time:F3}");
             return;
         }
+    }
+
+    private bool PrepareSmgReloadMarkers()
+    {
+        if (!settings.WeaponHandling.Value || CombatWorld.Networked)
+            return false;
+        var player = PlayerAttack.instance;
+        var animator = player ? player.animator : null;
+        var controller = animator ? animator.runtimeAnimatorController : null;
+        if (!controller)
+            return false;
+        if (controller == smgReloadController)
+            return smgReloadMarkersReady;
+        smgReloadController = controller;
+        smgReloadMarkersReady = false;
+
+        int prepared = 0;
+        foreach (var clip in controller.animationClips)
+        {
+            if (!clip || clip.name is not ("Elster_Aim_SMG_Reload" or "Elster_Aim_SMG_Reload2"))
+                continue;
+            var events = clip.events;
+            for (int index = 0; index < WeaponAudio.SmgReloadMarkerCount; index++)
+            {
+                float time = WeaponAudio.SmgReloadMarkerTime(index);
+                if (time >= clip.length)
+                    return false;
+                string marker = WeaponAudio.SmgReloadMarkerPrefix + index;
+                bool present = false;
+                foreach (var existing in events)
+                    if (existing.functionName == nameof(CombatSfxManager.PlaySFX) && existing.stringParameter == marker)
+                    {
+                        present = true;
+                        break;
+                    }
+                if (!present)
+                    clip.AddEvent(new AnimationEvent
+                    {
+                        functionName = nameof(CombatSfxManager.PlaySFX),
+                        stringParameter = marker,
+                        time = time,
+                        messageOptions = SendMessageOptions.DontRequireReceiver
+                    });
+            }
+            prepared++;
+        }
+        smgReloadMarkersReady = prepared > 0;
+        Log($"SMG reload animation clips prepared={prepared}");
+        return smgReloadMarkersReady;
     }
 
     private readonly record struct HandlingState(AnWeapon Weapon, float Cooldown);

@@ -25,6 +25,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
     private float noticeUntil;
     private float nextBleed;
     private float bleedingUntil;
+    private bool playedWoundSound;
     private float scanAt;
     private string notice;
     private Vector3 impactDirection;
@@ -58,6 +59,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
         {
             bleedingUntil = Time.time + 16f;
             nextBleed = Time.time;
+            playedWoundSound = false;
         }
         Commit(newSever ? "LEFT ARM LOST" : "LEG ACTUATOR DAMAGED");
         log($"elster trauma hp={before}->{hp} state={trauma}");
@@ -234,7 +236,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
         var outward = rig.LeftHand ? (rig.LeftHand.position - point).normalized : Battlefield.Down;
         var motion = actor._rigidbody ? actor._rigidbody.velocity : Vector3.zero;
         blood.Drip(point, outward, motion, Floor(), Battlefield.RoomSolids, settings.BloodDensity,
-            Mathf.Clamp01((bleedingUntil - now) / 12f));
+            Mathf.Clamp01((bleedingUntil - now) / 12f), ref playedWoundSound);
     }
 
     private float Floor()

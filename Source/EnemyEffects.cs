@@ -30,9 +30,6 @@ internal sealed partial class EnemyEffects
     private bool corpseBakedAtRest;
     private float corpseLift;
     private float corpseSupportFloor;
-    private Vector3 corpseFooting;
-    private float nextNudgeLog;
-    private GroundSlide nativeCorpseSlide;
     private Vector3 corpseFacing;
     private BoxCollider fittedDownedBox;
     private Vector3 originalBoxCenter;
@@ -110,10 +107,12 @@ internal sealed partial class EnemyEffects
     public EnemyController Target { get; }
     public bool CanRagdoll => rig.CanRagdoll;
     public Vector3 ShotCenter => waistSplit?.StompPoint ?? (ragdoll != null ? corpseCenter :
-        wasCrawling ? crawlCenter : Target.transform.position + Battlefield.Up * 4f);
+        HasGroundAimPose ? crawlCenter : Target.transform.position + Battlefield.Up * 4f);
     private bool NativeDowned => Target.staggerType is EnemyController.hurtState.critical or EnemyController.hurtState.fire;
-    public bool IsCrawling => standardReplika && !downed && !NativeDowned && (missing & InjuryRules.Legs) != 0 && rig.CanCrawl;
+    private bool CanCrawlWithInjury => standardReplika && (missing & InjuryRules.Legs) != 0 && rig.CanCrawl;
+    public bool IsCrawling => CanCrawlWithInjury && !downed && !NativeDowned && !holdingKnockdownCrawl;
     public bool HasCrawlPose => wasCrawling && IsCrawling;
+    public bool HasGroundAimPose => HasCrawlPose || holdingKnockdownCrawl || revivalStage != RevivalStage.None;
     public bool EnteredCrawl => enteredCrawl;
     // Kolibri's shorter torso needs a higher cut to clear the leg seams.
     private float WaistFraction => standardReplika ? 0.34f : 0.81f;
@@ -202,7 +201,7 @@ internal sealed partial class EnemyEffects
         log($"injured attack started arm={arm} crawling={IsCrawling && mayCrawl} weaponMask=0x{WeaponArms:X}");
     }
 
-    private bool CanSwipe() => !downed && Target.hitbox && Target.hitbox.HP > 0
+    private bool CanSwipe() => !downed && knockdownPose == null && !HoldRevivalAi && Target.hitbox && Target.hitbox.HP > 0
         && Target.state is EnemyController.enemystate.pursuit or EnemyController.enemystate.attack
         && Target.staggerType == EnemyController.hurtState.none
         && !PlayerState.paused && !PlayerState.menu && !PlayerState.eventScreen
@@ -284,7 +283,8 @@ internal sealed partial class EnemyEffects
 
     public void ReleaseUnusedAnimation()
     {
-        if (!animationHeld || ragdoll != null || waistSplit != null || crawlDeathPose != null)
+        if (!animationHeld || ragdoll != null || waistSplit != null || crawlDeathPose != null
+            || revivalStage == RevivalStage.Reassemble)
             return;
         animationHeld = false;
         if (animator)
@@ -427,8 +427,9 @@ internal sealed partial class EnemyEffects
                 cutLimb = TryCompanion(Battlefield.Height(center) > floor + 3.7f, "heavy finish");
         }
 
-        if (!cutLimb && ballistic)
+        if (ballistic && !cutLimb)
             sounds.PlayImpact(center, heavy);
+
         if (cutLimb && !preview && standardReplika && (missing & InjuryRules.Legs) == InjuryRules.Legs && !crawlKilled)
             PrepareCrawlDeath(ragdoll == null ? rig.Capture() : null);
 
@@ -591,7 +592,7 @@ internal sealed partial class EnemyEffects
     public void RestorePose()
     {
         rig.RestorePose();
-        UpdateCrawlAim();
+        UpdateGroundAim();
     }
 
     private void QueuePool(float scale, Vector3? stompPosition = null)
@@ -662,18 +663,21 @@ internal sealed partial class EnemyEffects
             killed = true;
             alive = false;
         }
+        if (revivalStage != RevivalStage.None && (!alive || NativeDowned))
+            EndBodyRevival(interrupted: true);
         if (alive && downed)
         {
             log($"revival nativeState={Target.state} hp={Target.hitbox.HP}");
-            EndRagdoll();
-            if (!ReassemblyEnabled)
-                RestoreCrawlArm();
+            if (!awaitingCorpseRevival || !BeginBodyRevival())
+                EndRagdoll();
             Array.Clear(partDamage, 0, partDamage.Length);
             unlocatedDamage = 0;
             downed = false;
-            nativeCorpseSlide.Stop();
             poolScale = 0;
         }
+        PrepareKnockdownCrawl(alive, mayCrawl, position);
+        if (!PrepareRevivalFrame(mayCrawl))
+            return;
         ObserveRevival(alive);
         if (!alive)
             ApplyCrawlDeathPose();
@@ -688,9 +692,6 @@ internal sealed partial class EnemyEffects
                 if (renderer && !renderer.forceRenderingOff) renderer.forceRenderingOff = true;
             if (!corpseBakedAtRest && (physics.SimulatedTimeThisFrame > 0 || !ragdoll.IsSimulating))
                 BakeCorpse();
-            var push = ragdoll.Nudge(physics.PlayerStep, corpseLift, corpseSupportFloor);
-            if (push != Vector3.zero)
-                ShiftSettledCorpse(push);
             if (Time.time >= nextPhysicsLog && ragdoll.IsSimulating)
             {
                 nextPhysicsLog = Time.time + 0.25f;
@@ -701,22 +702,21 @@ internal sealed partial class EnemyEffects
         if (waistSplit != null)
         {
             HoldNativeAnimation();
-            waistSplit.Tick(physics.SimulatedTimeThisFrame, physics.PlayerStep, blood, amount, floor, WallMask);
+            waistSplit.Tick(physics.SimulatedTimeThisFrame, blood, amount, floor, WallMask);
             FollowDownedBody(waistSplit.Travel, waistSplit.StompPoint);
         }
-        if (ragdoll == null && waistSplit == null && killed && downed && IsSupported(Target))
-            ShiftNativeCorpse();
-
         TryStartPool(blood);
 
-        bool crawling = alive && IsCrawling && mayCrawl;
+        bool crawling = alive && IsCrawling && mayCrawl && revivalStage != RevivalStage.Reassemble;
         enteredCrawl |= crawling;
         if (crawling != wasCrawling)
         {
             wasCrawling = crawling;
             log($"crawl active={crawling} missing=0x{missing:X} position={Battlefield.Format(position)}");
         }
-        blend = NativeDowned ? 0f : Mathf.MoveTowards(blend, crawling ? 1 : 0, Time.deltaTime * 4.0f);
+        blend = NativeDowned || holdingKnockdownCrawl || revivalStage == RevivalStage.Reassemble ? 0f
+            : crawling && (revivalStage == RevivalStage.Align || knockdownPose != null) ? 1f
+            : Mathf.MoveTowards(blend, crawling ? 1 : 0, Time.deltaTime * 4.0f);
         if (alive && !downed && blend > 0)
         {
             float movement = Mathf.Clamp01(travel.magnitude / Mathf.Max(0.001f, Time.deltaTime) * 0.30f);
@@ -726,70 +726,41 @@ internal sealed partial class EnemyEffects
                 floor = FindFloor();
             rig.Crawl(Target.transform, floor, phase, movement, blend, Missing(Part.LeftLeg), Missing(Part.RightLeg),
                 Missing(Part.LeftArm), Missing(Part.RightArm));
+            if (crawling && knockdownPose != null)
+                BlendKnockdownCrawl(position);
         }
 
-        if (alive && Target.state == EnemyController.enemystate.pursuit && !Target.tracking && UsesInjuredAttack(mayCrawl))
+        bool revivalOverride = revivalStage is RevivalStage.Reassemble or RevivalStage.Align;
+        if (revivalStage != RevivalStage.None)
+            AdvanceBodyRevival();
+        if (alive && revivalStage == RevivalStage.None && Target.state == EnemyController.enemystate.pursuit
+            && !Target.tracking && UsesInjuredAttack(mayCrawl))
             TryStartSwipe(mayCrawl);
         TickSwipe(crawling);
         AdvanceLimbReturns(sounds);
         if (ragdoll == null && waistSplit == null)
-            RefreshSkins(crawlDeathPose != null || alive && !NativeDowned && blend > 0);
-        visiblePose = alive && (blend > 0 || swipeArm != Part.Body)
+            RefreshSkins(crawlDeathPose != null || holdingKnockdownCrawl || alive && !NativeDowned && (blend > 0 || revivalOverride));
+        visiblePose = alive && (blend > 0 || swipeArm != Part.Body || revivalOverride || holdingKnockdownCrawl)
             ? rig.Capture(visiblePose) : null;
         UpdateCrawlInteraction(crawling, mayCut, mayRagdoll, blood, amount, sounds);
         TickWounds(killed, blood, amount);
     }
 
-    private void ShiftSettledCorpse(Vector3 push)
-    {
-        float surface = Battlefield.FloorBelow(corpseFooting + push, corpseSupportFloor);
-        float rise = surface - corpseSupportFloor;
-        corpseSupportFloor = surface;
-        corpseLift += rise;
-        push += Battlefield.Up * rise;
-        corpseRoot.transform.position += push;
-        corpseCenter += push;
-        corpseFooting += push;
-        foreach (var wound in wounds)
-            wound.ShiftCorpse(push);
-        if (Time.time >= nextNudgeLog)
-        {
-            nextNudgeLog = Time.time + 0.45f;
-            log($"corpse nudged center={Battlefield.Format(corpseCenter)} travel={Battlefield.Format(push)} floor={surface:F3} footSpeed={physics.PlayerStep.Speed:F2}");
-        }
-    }
-
-    private void ShiftNativeCorpse()
-    {
-        var step = physics.PlayerStep;
-        if (!rig.Hips || !rig.Chest || (!step.Moving && !nativeCorpseSlide.Moving))
-            return;
-        var contact = new DebrisContact(rig.Hips.position, rig.Chest.position, 0.78f);
-        var move = nativeCorpseSlide.Advance(step.Push(contact) * 0.54f, 17f);
-        if (move == Vector3.zero)
-            return;
-        var allowed = DebrisContact.LimitTravel(contact.Start, move, floor, contact.Radius);
-        allowed = DebrisContact.LimitTravel(contact.End, allowed, floor, contact.Radius);
-        if (allowed == Vector3.zero)
-        {
-            nativeCorpseSlide.Stop();
-            return;
-        }
-        float surface = Battlefield.FloorBelow(contact.Center + allowed, floor);
-        Target.transform.position += allowed + Battlefield.Up * (surface - floor);
-        floor = surface;
-    }
-
     private void UpdateCrawlInteraction(bool crawling, bool mayCut, bool mayRagdoll, BloodEffects blood, float amount, CutSounds sounds)
     {
-        if (!crawling)
+        if (crawling || holdingKnockdownCrawl || revivalStage != RevivalStage.None)
         {
-            ReleaseCrawlInteraction();
+            crawlCenter = Vector3.Lerp(rig.Hips.position, rig.Chest.position, 0.72f);
+            UpdateGroundAim();
+        }
+        else
+            ReleaseGroundAim();
+
+        if (!crawling || revivalStage != RevivalStage.None)
+        {
+            ReleaseCrawlPrompt();
             return;
         }
-
-        crawlCenter = Vector3.Lerp(rig.Hips.position, rig.Chest.position, 0.72f);
-        UpdateCrawlAim();
 
         var prompt = Target.stompInter;
         if (!prompt)
@@ -821,9 +792,9 @@ internal sealed partial class EnemyEffects
         finally { RestorePose(); }
     }
 
-    public void UpdateCrawlAim()
+    public void UpdateGroundAim()
     {
-        if (!Target || !HasCrawlPose || Target.state == EnemyController.enemystate.dead)
+        if (!Target || !HasGroundAimPose || Target.state == EnemyController.enemystate.dead)
             return;
         if (!crawlAimSearched)
         {
@@ -843,10 +814,20 @@ internal sealed partial class EnemyEffects
 
     private void ReleaseCrawlInteraction()
     {
+        ReleaseGroundAim();
+        ReleaseCrawlPrompt();
+    }
+
+    private void ReleaseGroundAim()
+    {
         if (crawlAim)
             crawlAim.localPosition = crawlAimRest;
         crawlAim = null;
         crawlAimSearched = false;
+    }
+
+    private void ReleaseCrawlPrompt()
+    {
         if (!ownsCrawlPrompt)
             return;
         ownsCrawlPrompt = false;
@@ -911,7 +892,7 @@ internal sealed partial class EnemyEffects
             if (pressure <= 0 || amount <= 0)
                 continue;
             float beneath = Battlefield.FloorBelow(point, floor);
-            if (blood.Drip(point, outward, wound.Velocity, beneath, WallMask, amount, pressure))
+            if (blood.Drip(point, outward, wound.Velocity, beneath, WallMask, amount, pressure, ref wound.Flow.PlayedSound))
                 wound.Emissions++;
         }
     }
@@ -1037,9 +1018,10 @@ internal sealed partial class EnemyEffects
                 throw new InvalidOperationException("Ragdoll could not produce a complete visible body");
 
             corpseBakedAtRest = !ragdoll.IsSimulating;
-            corpseSupportFloor = Battlefield.FloorBelow(corpseBakedAtRest ? lowest : corpseCenter, floor);
+            corpseSupportFloor = corpseBakedAtRest
+                ? Battlefield.FloorBelow(lowest, Battlefield.Height(lowest))
+                : Battlefield.FloorBelow(corpseCenter, floor);
             corpseLift = DebrisContact.FloorCorrection(depth, corpseSupportFloor, ragdoll.Landed, corpseBakedAtRest);
-            corpseFooting = lowest + Battlefield.Up * corpseLift;
             corpseRoot.transform.position += Battlefield.Up * corpseLift;
             corpseCenter += Battlefield.Up * corpseLift;
             pendingBoxFit = true;
@@ -1199,8 +1181,7 @@ internal sealed partial class EnemyEffects
 
         HideAccessories(part, bone, loose.Visual.transform);
         loose.Launch(direction, fling);
-        if (part != Part.Head)
-            RememberSeveredPart(severed);
+        RememberSeveredPart(severed);
 
         log($"cut limb={part} wound={Battlefield.Format(wound)} endpoint={Battlefield.Format(end)} floor={floor:F3} radius={width:F3} {loose.Diagnostics}");
         return true;
@@ -1282,14 +1263,6 @@ internal sealed partial class EnemyEffects
         target.revives = 0;
     }
 
-    private void RestoreCrawlArm()
-    {
-        // A revived crawler needs one arm to move. Keep their weapon arm severed when possible.
-        if ((missing & InjuryRules.Arms) != InjuryRules.Arms)
-            return;
-        RestorePart(InjuryRules.SwipeArm(0, WeaponArms));
-    }
-
     private void RestorePart(Part part)
     {
         int stillMissing = missing & ~(1 << (int)part);
@@ -1324,7 +1297,9 @@ internal sealed partial class EnemyEffects
     public void Suspend()
     {
         CancelLimbReturns();
-        nativeCorpseSlide.Stop();
+        EndBodyRevival(interrupted: true);
+        knockdownPose = null;
+        holdingKnockdownCrawl = false;
         ReleaseCrawlInteraction();
         RestorePose();
         CancelSwipe();
@@ -1397,6 +1372,7 @@ internal sealed partial class EnemyEffects
     public void Dispose()
     {
         CancelLimbReturns();
+        EndBodyRevival(interrupted: true);
         ReleaseCrawlInteraction();
         RestorePose();
         crawlDeathPose = null;
@@ -1443,8 +1419,6 @@ internal sealed partial class EnemyEffects
             corpsePoint = bone.position + lift;
             corpseDirection = bone.TransformDirection(localDirection);
         }
-
-        public void ShiftCorpse(Vector3 move) => corpsePoint += move;
 
         public void Track(Vector3 point, float time)
         {

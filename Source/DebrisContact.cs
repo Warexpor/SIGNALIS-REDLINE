@@ -47,7 +47,7 @@ internal readonly record struct DebrisContact(Vector3 Start, Vector3 End, float 
 
     public static float FloorCorrection(float bodyBottom, float floor, bool landed, bool settled)
     {
-        float correction = bodyBottom + floor + 0.025f;
+        float correction = bodyBottom + floor + 0.01f;
         return settled ? correction : Mathf.Max(landed ? -0.22f : 0f, correction);
     }
 

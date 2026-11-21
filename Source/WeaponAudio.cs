@@ -12,6 +12,8 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
 {
     private const string WeaponEvent = "event:/Elster/Weapons/";
     private const string ShotgunEvent = WeaponEvent + "Shotgun/";
+    internal const string SmgReloadEvent = WeaponEvent + "SMG/Reload";
+    internal const string SmgReloadMarkerPrefix = "REDLINE/SMG/Reload/";
     private const string PumpShort = ShotgunEvent + "PumpShort";
     private const string Pump = ShotgunEvent + "Pump";
     private const string ShellInsert = ShotgunEvent + "Insert";
@@ -21,9 +23,9 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
     private static readonly HandlingCue pistolOut = new(new("PistolHandling/mag-release", 104, 130));
     private static readonly HandlingCue pistolIn = new(new("PistolHandling/mag-insert", 101, 85));
     private static readonly HandlingCue pistolClose = new(new("PistolHandling/slide-forward", 16, 115));
-    private static readonly HandlingCue smgOut = new(new("SmgHandling/mag-release", 20, 114));
+    private static readonly HandlingCue smgOut = new(new("SmgHandling/mag-release", 10, 150));
     private static readonly HandlingCue smgIn = new(new("SmgHandling/mag-insert", 218, 100), Gain: 0.31f);
-    private static readonly HandlingCue smgClose = new(new("SmgHandling/action-close", 46, 105));
+    private static readonly HandlingCue smgClose = new(new("SmgHandling/action-close", 10, 140));
     private static readonly HandlingCue revolverOut = new(new("RevolverHandling/cylinder-eject", 48, 130),
         Alternate: new("RevolverHandling/cylinder-eject-alt", 403, 46));
     private static readonly HandlingCue revolverIn = new(new("RevolverHandling/cartridge-insert", 87, 100),
@@ -36,9 +38,18 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
     {
         rackOpen, rackClose with { Offset = 0.151f }
     };
+    // Vanilla SMG reload is mag out, a long pause, mag in, then a late subtle handle drag.
     private static readonly HandlingCue[] smgReload =
     {
-        smgOut with { Offset = 0.24f }, smgIn with { Offset = 0.74f }, smgClose with { Offset = 1.22f }
+        smgOut with { Offset = 12f / 60f }, smgIn with { Offset = 51f / 60f }
+        // Third beat (late handle drag) removed for now.
+        // smgClose with { Offset = 84f / 60f, Gain = 0.20f }
+    };
+    private static readonly HandlingCue[] smgInventoryReload =
+    {
+        smgOut with { Offset = 0.24f }, smgIn with { Offset = 0.86f }
+        // Third beat (late handle drag) removed for now.
+        // smgClose with { Offset = 1.45f, Gain = 0.20f }
     };
     private static readonly Dictionary<string, HandlingCue[]> animationReloads = new(StringComparer.Ordinal)
     {
@@ -65,9 +76,8 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
         },
         [WeaponEvent + "SMG/MagDrop"] = new[] { smgOut },
         [WeaponEvent + "SMG/MagInsert"] = new[] { smgIn },
-        [WeaponEvent + "SMG/SlideForward"] = new[] { smgClose },
-        [WeaponEvent + "SMG/Reload Inventory"] = smgReload,
-        [WeaponEvent + "SMG/Reload"] = smgReload,
+        [SmgReloadEvent + " Inventory"] = smgInventoryReload,
+        [SmgReloadEvent] = smgReload,
         [WeaponEvent + "Revolver/Eject"] = new[] { revolverOut },
         [WeaponEvent + "Revolver/Insert"] = new[] { revolverIn },
         [WeaponEvent + "Revolver/SnapClosed"] = new[] { revolverClose },
@@ -124,6 +134,35 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
     private int sampleRate;
     private IEnumerator<HandlingCue[]> warmHandling;
     private bool handlingWarm;
+    private int nextSmgReloadMarker = -1;
+    private float smgReloadCoveredAt = float.NegativeInfinity;
+
+    internal static int SmgReloadMarkerCount => smgReload.Length;
+    internal static float SmgReloadMarkerTime(int marker) => smgReload[marker].Offset;
+
+    public bool BeginSmgReload(bool markersReady)
+    {
+        nextSmgReloadMarker = -1;
+        if (!markersReady || !settings.WeaponHandling.Value || CombatWorld.Networked || !GetHandlingOutput())
+            return false;
+        foreach (var cue in smgReload)
+            if (SelectHandling(cue).File == null)
+                return false;
+        nextSmgReloadMarker = 0;
+        smgReloadCoveredAt = Time.unscaledTime;
+        log($"weapon reload uses animation cues event={SmgReloadEvent}");
+        return true;
+    }
+
+    public void PlaySmgReloadMarker(int marker, Vector3 origin)
+    {
+        if (marker < 0 || marker >= smgReload.Length || marker != nextSmgReloadMarker)
+            return;
+        nextSmgReloadMarker = marker + 1 < smgReload.Length ? marker + 1 : -1;
+        var cue = smgReload[marker] with { Offset = 0f };
+        if (TryHandling(new[] { cue }, origin: origin))
+            log($"weapon handling animation marker weapon=SMG beat={marker + 1} file={cue.Take.File} elapsed={Time.unscaledTime - smgReloadCoveredAt:F2}s");
+    }
 
     public bool Replaced(string path) =>
         playedFrame == Time.frameCount && string.Equals(playedEvent, path, StringComparison.Ordinal);
@@ -228,6 +267,9 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
 
     public static bool IsShotgunPump(string path) => path is Pump or PumpShort;
 
+    private static bool IsSmgReloadGranular(string path) => path == WeaponEvent + "SMG/MagDrop"
+        || path == WeaponEvent + "SMG/MagInsert" || path == WeaponEvent + "SMG/SlideForward";
+
     public bool PlayReloadRack() => PlayHandling(Pump, reloadMarker: true);
 
     public bool PlayPumpEmitter(string path)
@@ -270,6 +312,16 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
     {
         if (path == null || !settings.WeaponHandling.Value || CombatWorld.Networked)
             return false;
+        if (IsSmgReloadGranular(path))
+        {
+            if (Time.unscaledTime - smgReloadCoveredAt < 2.2f)
+            {
+                log($"SMG reload granular suppressed event={path} elapsed={Time.unscaledTime - smgReloadCoveredAt:F2}s");
+                return true;
+            }
+        }
+        else if (path == SmgReloadEvent || path == SmgReloadEvent + " Inventory")
+            smgReloadCoveredAt = Time.unscaledTime;
         if (animationReloads.TryGetValue(path, out var animation))
         {
             if (!GetHandlingOutput())
@@ -492,6 +544,8 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
         firedRackAt = float.NegativeInfinity;
         handledPumpAt = float.NegativeInfinity;
         handledShellAt = float.NegativeInfinity;
+        nextSmgReloadMarker = -1;
+        smgReloadCoveredAt = float.NegativeInfinity;
         if (handlingGroup.hasHandle())
             handlingGroup.stop();
     }

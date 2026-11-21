@@ -17,18 +17,36 @@ internal sealed class WaistSplit : IDisposable
     private readonly StumpBleed upperFlow = new(Time.time, true);
     private readonly StumpBleed lowerFlow = new(Time.time, true);
     private readonly Vector3 origin;
+    private readonly Rig.Snapshot assembledPose;
+    private readonly Vector3 hipsInUpper;
+    private readonly Quaternion hipsRotationInUpper;
+    private readonly Vector3 lowerInUpper;
+    private readonly Quaternion lowerRotationInUpper;
+    private (Vector3 Position, Quaternion Rotation) upperStart, upperEnd, lowerStart, lowerEnd;
+    private bool reviving;
     private Vector3 upperRim;
     private Vector3 lowerRim;
     private Vector3 upperNormal;
     private Vector3 lowerNormal;
     private bool originalsHidden;
     private int emissions;
+    private bool playedWoundSound;
 
-    private WaistSplit(DetachedLimb upper, DetachedLimb lower)
+    private WaistSplit(DetachedLimb upper, DetachedLimb lower, Rig.Snapshot pose)
     {
         this.upper = upper;
         this.lower = lower;
-        origin = upper.Body.transform.position;
+        assembledPose = pose;
+        var frame = upper.Body.transform;
+        var bottom = lower.Body.transform;
+        origin = frame.position;
+        if (pose != null)
+        {
+            hipsInUpper = frame.InverseTransformPoint(pose.HipsPosition);
+            hipsRotationInUpper = Quaternion.Inverse(frame.rotation) * pose.HipsRotation;
+        }
+        lowerInUpper = frame.InverseTransformPoint(bottom.position);
+        lowerRotationInUpper = Quaternion.Inverse(frame.rotation) * bottom.rotation;
     }
 
     public static WaistSplit TryStart(EnemyController target, Rig rig, SkinMap map, List<SkinCut> skins, EffectsPhysics physics,
@@ -50,7 +68,7 @@ internal sealed class WaistSplit : IDisposable
         try
         {
             lower = physics.CreatePiece("REDLINE Waist Lower", lowerCenter, lowerCenter - up * 3f, floor, 1.1f);
-            split = new WaistSplit(upper, lower);
+            split = new WaistSplit(upper, lower, rig.Capture());
             float bestPerimeter = 0;
             Vector3 wound = waist;
             var properties = new MaterialPropertyBlock();
@@ -316,11 +334,51 @@ internal sealed class WaistSplit : IDisposable
         }
     }
 
-    public void Tick(float dt, Footstep foot, BloodEffects blood, float amount, float floor, int mask)
+    public Rig.Snapshot BeginRevival(float floor)
+    {
+        if (assembledPose == null)
+            return null;
+        var top = upper.Body.transform;
+        var bottom = lower.Body.transform;
+        upperStart = (top.position, top.rotation);
+        lowerStart = (bottom.position, bottom.rotation);
+        var hips = top.TransformPoint(hipsInUpper);
+        float surface = Battlefield.FloorBelow(hips, floor);
+        var lift = Battlefield.Up * Mathf.Max(0f, surface + 0.4f - Battlefield.Height(hips));
+        upperEnd = (top.position + lift, top.rotation);
+        lowerEnd = (top.TransformPoint(lowerInUpper) + lift, top.rotation * lowerRotationInUpper);
+        upper.SetKinematic(true);
+        lower.SetKinematic(true);
+        reviving = true;
+        return assembledPose with { HipsPosition = hips + lift, HipsRotation = top.rotation * hipsRotationInUpper };
+    }
+
+    public bool AdvanceRevival(float elapsed)
+    {
+        float weight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / 0.72f));
+        Move(upper.Body.transform, upperStart, upperEnd);
+        Move(lower.Body.transform, lowerStart, lowerEnd);
+        return weight >= 1f;
+
+        void Move(Transform frame, (Vector3 Position, Quaternion Rotation) from, (Vector3 Position, Quaternion Rotation) to)
+        {
+            frame.SetPositionAndRotation(Vector3.Lerp(from.Position, to.Position, weight),
+                Quaternion.Slerp(from.Rotation, to.Rotation, weight));
+        }
+    }
+
+    public void CancelRevival()
+    {
+        if (!reviving)
+            return;
+        reviving = false;
+        upper.SetKinematic(false);
+        lower.SetKinematic(false);
+    }
+
+    public void Tick(float dt, BloodEffects blood, float amount, float floor, int mask)
     {
         HideOriginals();
-        upper.Nudge(foot);
-        lower.Nudge(foot);
         upper.Tick(dt);
         lower.Tick(dt);
         Emit(upper, upperFlow, upperRim, upperNormal);
@@ -335,7 +393,8 @@ internal sealed class WaistSplit : IDisposable
             var point = pose.TransformPoint(localPoint);
             var outward = pose.TransformDirection(localNormal);
             var velocity = Vector3.ClampMagnitude(piece.PointVelocity(point), 12f);
-            if (blood.Drip(point, outward, velocity, Battlefield.FloorBelow(point, floor), mask, amount, pressure))
+            if (blood.Drip(point, outward, velocity, Battlefield.FloorBelow(point, floor), mask, amount, pressure,
+                ref playedWoundSound))
                 emissions++;
         }
     }

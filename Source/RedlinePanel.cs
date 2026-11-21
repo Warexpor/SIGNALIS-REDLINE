@@ -21,7 +21,7 @@ internal sealed class RedlinePanel
     private static readonly Color Workspace = new(0.064f, 0.073f, 0.080f);
     private static readonly Color Border = new(0.26f, 0.29f, 0.30f);
     private static readonly Color Rule = new(0.14f, 0.16f, 0.17f);
-    private static readonly Color Accent = new(0.91f, 0.27f, 0.36f);
+    private static readonly Color Accent = new(1f, 0f, 0f);
     private static readonly Color Selected = new(0.105f, 0.123f, 0.136f);
     private static readonly Color Ink = new(0.90f, 0.91f, 0.88f);
     private static readonly Color Muted = new(0.64f, 0.69f, 0.69f);
@@ -54,7 +54,8 @@ internal sealed class RedlinePanel
             {
                 Slider("Ammo pickup bonus", "Extra rounds in freshly opened ammo pickups.", settings.AmmoBonus, suffix: "%"),
                 Slider("Reinforcements", "Adds enemies to eligible rooms on first entry.", settings.ReinforcementRate, maximum: 1f, suffix: "%"),
-                Switch("Elster injuries", "Serious hits can damage Elster's leg or sever her support arm.", settings.ElsterTrauma)
+                Switch("Elster injuries", "Serious hits can damage Elster's leg or sever her support arm.", settings.ElsterTrauma),
+                Switch("Ariane flash", "Show Ariane flashes on low-health hits and allow the F1 preview.", settings.ArianeFlash)
             }),
             new Section("Audio", new[]
             {
@@ -82,7 +83,7 @@ internal sealed class RedlinePanel
                 Switch("Decapitation", "Allow fatal head cuts.", settings.Decapitation, CanCut),
                 Slider("Waist split chance", "Base chance of splitting the torso on a heavy fatal shot.",
                     settings.WaistChance, 1f, 0.01f, "%", () => CanCut() && CanRagdoll()),
-                Switch("Reassemble on revival", "Let reviving Replikas pull reachable limbs back into place.", settings.Reassemble, CanCut)
+                Switch("Reassemble on revival", "Let Replikas pull reachable limbs back when they revive from death.", settings.Reassemble, CanCut)
             }),
             new Section("Physics", new[]
             {
@@ -91,15 +92,15 @@ internal sealed class RedlinePanel
                 Slider("Throw speed", "Scale how fast the body launches along the floor.", settings.ThrowSpeed, enabled: CanRagdoll),
                 Slider("Vertical lift", "Scale how strongly the body launches up or down.", settings.Lift, enabled: CanRagdoll),
                 Slider("Spin", "Scale the amount of tumble when the body launches.", settings.Spin, enabled: CanRagdoll),
-                Switch("Push debris", "Move bodies and severed parts by walking into them.", settings.DebrisPush)
+                Switch("Push severed limbs", "Move loose limbs by walking into them.", settings.DebrisPush)
             }),
             new Section("System", new[]
             {
                 Switch("Heavy-shot overkill", "Let powerful fatal hits bypass an enemy's recoverable fall.", settings.HeavyOverkill, CanRagdoll),
-                Slider("Gore sound volume", "Volume of bullet impacts, cuts, and stomp crunches.", settings.CutVolume),
+                Slider("Gore sound volume", "Volume of bullet impacts, fresh wounds, cuts, reattachment, and stomps.", settings.CutVolume),
                 Switch("Diagnostic log", "Write detailed traces to UserData/Redline.verbose.log.", settings.DiagnosticLog),
                 Switch("F8 cut preview", "Preview a leg cut on a nearby enemy without dealing HP damage.", settings.ScenePreview),
-                Switch("F10 revival test", "Revive a recoverable enemy. Prioritizes reachable severed limbs.",
+                Switch("F10 revival test", "Revive a corpse in the room, including permanent deaths.",
                     settings.RevivalTest)
             })
         };

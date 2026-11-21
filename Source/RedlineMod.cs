@@ -14,7 +14,7 @@ namespace Redline;
 
 public sealed partial class RedlineMod : MelonMod
 {
-    internal const string Version = "0.2.0";
+    internal const string Version = "0.3.0";
     private static RedlineMod active;
     private static readonly System.Random overkillRandom = new();
     private readonly Dictionary<int, EnemyEffects> enemies = new();
@@ -22,7 +22,7 @@ public sealed partial class RedlineMod : MelonMod
     private readonly Queue<Impact> impacts = new();
     private readonly Queue<StompHit> stomps = new();
     private readonly HashSet<int> proneSquibs = new();
-    private readonly List<(EnemyController Target, string Owner)> loadedEnemies = new();
+    private readonly List<(EnemyController Target, string Owner, bool Corpse)> loadedEnemies = new();
     private BloodEffects blood;
     private ElsterBlood elsterBlood;
     private CutSounds sounds;
@@ -52,9 +52,9 @@ public sealed partial class RedlineMod : MelonMod
         settings = new RedlineSettings();
         UpdateDiagnosticLog();
         Log($"startup v{Version} gravity={Battlefield.Format(Physics.gravity)} blood={settings.BloodDensity} ragdoll={settings.Ragdoll.Value} extremeRagdoll={settings.ExtremeRagdoll.Value} dismember={settings.Dismember.Value} crawl={settings.Crawl.Value} waistChance={settings.WaistChance.Value} reassembly={settings.Reassemble.Value}");
-        blood = new BloodEffects(settings, Log);
-        elsterBlood = new ElsterBlood(settings, Log);
         sounds = new CutSounds(settings, () => weaponAudio?.GetGoreOutput() ?? default, Log);
+        blood = new BloodEffects(settings, sounds, Log);
+        elsterBlood = new ElsterBlood(settings, Log);
         physics = new EffectsPhysics(settings, Log);
         panel = new RedlinePanel(settings);
         try { skinMap = new SkinMap(Path.Combine("UserData", "RedlineSkinMap.gz")); }
@@ -87,6 +87,7 @@ public sealed partial class RedlineMod : MelonMod
         Hook(typeof(Rewired.Integration.UnityUI.RewiredStandaloneInputModule), "Process", nameof(AllowMenuInput), null);
         Hook(typeof(UnityEngine.EventSystems.StandaloneInputModule), "Process", nameof(AllowMenuInput), null);
         InstallCombatHooks();
+        InstallArianeFlash();
         Log($"skin map loaded entries={skinMap.Count}");
         LoggerInstance.Msg($"REDLINE Combat Overhaul loaded with {skinMap.Count} local skin bindings.");
     }
@@ -446,7 +447,7 @@ public sealed partial class RedlineMod : MelonMod
         if (owner.state == EnemyController.enemystate.dead)
             ClearAim(__instance);
         else if (active.enemies.TryGetValue(owner.GetInstanceID(), out var enemy))
-            enemy.UpdateCrawlAim();
+            enemy.UpdateGroundAim();
     }
 
     private static void AimTargetingEnd(PlayerAim __instance)
@@ -455,9 +456,9 @@ public sealed partial class RedlineMod : MelonMod
         var owner = AimOwner(target);
         var box = __instance.crosshair;
         if (owner && box && box.gameObject.activeSelf
-            && active.enemies.TryGetValue(owner.GetInstanceID(), out var enemy) && enemy.HasCrawlPose)
+            && active.enemies.TryGetValue(owner.GetInstanceID(), out var enemy) && enemy.HasGroundAimPose)
         {
-            enemy.UpdateCrawlAim();
+            enemy.UpdateGroundAim();
             box.position = target.position;
         }
     }
@@ -484,16 +485,22 @@ public sealed partial class RedlineMod : MelonMod
             aim.crosshairBlocked.SetActive(false);
     }
 
-    private static void EnemyUpdateBegin(EnemyController __instance, out UpdateSnapshot __state)
+    private static bool EnemyUpdateBegin(EnemyController __instance, out UpdateSnapshot __state)
     {
         __state = default;
-        if (!UsesInjuredAttack(__instance, out var enemy) || !__instance.Preset)
-            return;
+        bool injuredAttack = UsesInjuredAttack(__instance, out var enemy);
+        // Native Update can revive a queued corpse before LateUpdate observes it.
+        enemy?.ObserveCorpse();
+        if (enemy?.HoldRevivalAi == true)
+            return false;
+        if (!injuredAttack || !__instance.Preset)
+            return true;
         // Presets are shared. Scope the range to this actor's synchronous Update, including its AI state check.
         var preset = __instance.Preset;
         __state = new UpdateSnapshot(preset, preset.attackRange, preset.stoppingDistance);
         preset.attackRange = enemy.SwipeRange(active.settings.Crawl.Value) + 0.35f;
         preset.stoppingDistance = Mathf.Min(preset.stoppingDistance, 2.25f);
+        return true;
     }
 
     private static void EnemyUpdateEnd(UpdateSnapshot __state) => RestoreAttackRange(__state);
@@ -649,6 +656,8 @@ public sealed partial class RedlineMod : MelonMod
     {
         if (__instance && active.enemies.TryGetValue(__instance.GetInstanceID(), out var enemy))
         {
+            if (enemy.ForcingCorpseRevival)
+                return true;
             if (enemy.KeepFatalCutDead())
             {
                 active.Log($"enemy revival reset blocked id={__instance.GetInstanceID()}");
@@ -665,13 +674,12 @@ public sealed partial class RedlineMod : MelonMod
 
     private static void EnemyLoaded(EnemyController __instance, bool __runOriginal)
     {
-        if (!__runOriginal || !__instance || !active.settings.Dismember.Value || !active.settings.Reassemble.Value
-            || !__instance.queuedForRespawn || __instance.permadeath)
+        if (!__runOriginal || !__instance || !active.settings.Dismember.Value || __instance.permadeath)
             return;
         try
         {
             if (EnemyEffects.IsSupported(__instance) && EnemyEffects.RecoveryOwner(__instance) is { Length: > 0 } owner)
-                active.loadedEnemies.Add((__instance, owner));
+                active.loadedEnemies.Add((__instance, owner, EnemyEffects.IsCorpse(__instance)));
         }
         catch (Exception ex) { active.WarnOnce("revival load", ex); }
     }
@@ -679,7 +687,7 @@ public sealed partial class RedlineMod : MelonMod
     private void RecoverLoadedInjuries()
     {
         // Load can run during room activation, before the retained debris has changed visibility.
-        foreach (var (target, owner) in loadedEnemies)
+        foreach (var (target, owner, corpse) in loadedEnemies)
         {
             if (!target || !target.isActiveAndEnabled || target.permadeath)
                 continue;
@@ -687,7 +695,7 @@ public sealed partial class RedlineMod : MelonMod
             {
                 var injuries = new List<SeveredPart>(physics.FindRetainedInjuries(owner));
                 if (injuries.Count != 0)
-                    GetEnemy(target).RestoreRetainedInjuries(injuries);
+                    GetEnemy(target).RestoreRetainedInjuries(injuries, corpse);
             }
             catch (Exception ex)
             {
@@ -705,6 +713,12 @@ public sealed partial class RedlineMod : MelonMod
 
     public override void OnLateUpdate()
     {
+        try { arianeFlash?.Tick(ArianeFlashSuppressed); }
+        catch (Exception ex)
+        {
+            arianeFlash.Reset();
+            WarnOnce("Ariane overlay", ex);
+        }
         if (Time.deltaTime <= 0)
             return;
         bool measure = verbose != null;
@@ -819,12 +833,6 @@ public sealed partial class RedlineMod : MelonMod
             lastMeasuredFrame = frame;
             lastLateUpdateMs = modMs;
         }
-        if (verbose != null && Time.unscaledTime >= nextLogFlush)
-        {
-            nextLogFlush = Time.unscaledTime + 0.75f;
-            try { verbose.Flush(); }
-            catch (IOException ex) { DisableLog(ex); }
-        }
     }
 
     public override void OnUpdate()
@@ -833,6 +841,14 @@ public sealed partial class RedlineMod : MelonMod
         catch (Exception ex) { ReportPanelError(ex); }
         if (settings != null)
             UpdateDiagnosticLog();
+        try { UpdateArianePreview(); }
+        catch (Exception ex) { WarnOnce("Ariane F1 input", ex); }
+        if (verbose != null && Time.unscaledTime >= nextLogFlush)
+        {
+            nextLogFlush = Time.unscaledTime + 0.75f;
+            try { verbose.Flush(); }
+            catch (IOException ex) { DisableLog(ex); }
+        }
         elsterInjuries?.BeginFrame();
         foreach (var enemy in enemies.Values)
             enemy.RestorePose();
@@ -862,6 +878,8 @@ public sealed partial class RedlineMod : MelonMod
         try { panel?.Close(); }
         catch (Exception ex) { WarnOnce("settings shutdown", ex); }
         Log("shutdown");
+        try { arianeFlash?.Dispose(); }
+        catch (Exception ex) { WarnOnce("Ariane overlay shutdown", ex); }
         elsterInjuries?.SceneChanged(reset: true);
         combatEncounters?.Dispose();
         weaponAudio?.Dispose();
@@ -948,6 +966,8 @@ public sealed partial class RedlineMod : MelonMod
             enemy.ReleaseUnusedAnimation();
         }
         bool resetEffects = sceneName is "StartupPC" or "MainMenu";
+        try { arianeFlash?.SceneChanged(); }
+        catch (Exception ex) { WarnOnce("Ariane overlay scene change", ex); }
         elsterInjuries?.SceneChanged(resetEffects);
         combatEncounters?.SceneChanged();
         if (resetEffects)
@@ -985,11 +1005,12 @@ public sealed partial class RedlineMod : MelonMod
     {
         Log("revival test requested");
         var player = PlayerState.player;
+        // The menu flag can stay set after gameplay resumes. The live state and pause flags gate F10.
         if (!player || PlayerState.gameState != PlayerState.gameStates.play || PlayerState.noplayer
-            || PlayerState.paused || PlayerState.pauseMenu || PlayerState.menu
+            || PlayerState.paused || PlayerState.pauseMenu
             || PlayerState.eventScreen || PlayerState.cutscene || PlayerState.gameOver)
         {
-            Log($"revival test skipped player={!!player} gameState={PlayerState.gameState}");
+            Log($"revival test skipped player={!!player} gameState={PlayerState.gameState} noplayer={PlayerState.noplayer} paused={PlayerState.paused} pauseMenu={PlayerState.pauseMenu} menu={PlayerState.menu} eventScreen={PlayerState.eventScreen} cutscene={PlayerState.cutscene} gameOver={PlayerState.gameOver}");
             return;
         }
 
@@ -997,7 +1018,10 @@ public sealed partial class RedlineMod : MelonMod
         EnemyController nearest = null;
         float closest = float.PositiveInfinity;
         bool preferReassembly = false;
-        foreach (var target in UnityEngine.Object.FindObjectsOfType<EnemyController>())
+        var room = PlayerState.currentRoom;
+        var candidates = room ? room.GetComponentsInChildren<EnemyController>(false)
+            : UnityEngine.Object.FindObjectsOfType<EnemyController>();
+        foreach (var target in candidates)
         {
             if (!EnemyEffects.CanForceRevival(target))
                 continue;
@@ -1011,11 +1035,12 @@ public sealed partial class RedlineMod : MelonMod
         }
         if (nearest)
         {
+            Log($"revival test selected enemy={nearest.GetInstanceID()} type={nearest.Preset.Type} permanent={nearest.permadeath}");
             if (!GetEnemy(nearest).ForceRevival())
                 Log($"revival test reset did not revive enemy={nearest.GetInstanceID()}");
         }
         else
-            Log("revival test found no recoverable downed enemy");
+            Log($"revival test found no eligible corpse room={(room ? room.roomName : "(none)")} candidates={candidates.Length}");
     }
 
     private readonly HashSet<string> warnings = new();

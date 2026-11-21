@@ -9,7 +9,7 @@ internal sealed class RedlineSettings
     public readonly MelonPreferences_Entry<float> Blood, Spray, Pools, WoundFlow, ElsterStains;
     public readonly MelonPreferences_Entry<float> CutSensitivity, WaistChance, ThrowSpeed, Lift, Spin, CutVolume;
     public readonly MelonPreferences_Entry<float> AmmoBonus, ReinforcementRate, GunshotVolume, GunshotRoom, HandlingVolume;
-    public readonly MelonPreferences_Entry<bool> ElsterTrauma, RecordedGunshots, WeaponHandling;
+    public readonly MelonPreferences_Entry<bool> ElsterTrauma, ArianeFlash, RecordedGunshots, WeaponHandling;
     public readonly MelonPreferences_Entry<bool> WallSplatter, Dismember, Crawl, Decapitation, Reassemble, Ragdoll,
         ExtremeRagdoll, DebrisPush, HeavyOverkill, DiagnosticLog, ScenePreview, RevivalTest;
 
@@ -20,6 +20,8 @@ internal sealed class RedlineSettings
         AmmoBonus = Category.CreateEntry("AmmoPickupBonus", 0.5f);
         ReinforcementRate = Category.CreateEntry("ReinforcementRate", 0.5f);
         ElsterTrauma = Category.CreateEntry("ElsterTrauma", true);
+        ArianeFlash = Category.CreateEntry("ArianeFlash", true,
+            description: "Enable the low-health Ariane flash and its F1 preview");
         RecordedGunshots = Category.CreateEntry("RecordedGunshots", true);
         GunshotVolume = Category.CreateEntry("GunshotVolume", 1f);
         GunshotRoom = Category.CreateEntry("GunshotRoom", 1f,
@@ -42,7 +44,7 @@ internal sealed class RedlineSettings
         WaistChance = Category.CreateEntry("WaistCutChance", 0.42f,
             description: "Base waist-split chance on a heavy fatal shot, from 0 to 1");
         Reassemble = Category.CreateEntry("ReassembleOnRevival", true,
-            description: "Let recoverable Replikas pull reachable limbs back on revival");
+            description: "Let Replikas that revive from death pull reachable limbs back");
         Ragdoll = Category.CreateEntry("Ragdoll", true);
         ExtremeRagdoll = Category.CreateEntry("ExtremeRagdoll", false,
             description: "Increase heavy-shot ragdoll knockback, lift, and spin within the launch limits");
@@ -56,7 +58,7 @@ internal sealed class RedlineSettings
         ScenePreview = Category.CreateEntry("ScenePreviewF8", false,
             description: "F8 previews a leg hit on the nearest active enemy without dealing damage");
         RevivalTest = Category.CreateEntry("RevivalTestF10", true,
-            description: "F10 revives a recoverable enemy, prioritizing reachable severed limbs");
+            description: "F10 revives corpses in the room, including permanent deaths");
         Category.SaveToFile(false);
     }
 

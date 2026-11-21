@@ -8,7 +8,7 @@ using Random = UnityEngine.Random;
 
 namespace Redline;
 
-internal sealed class BloodEffects(RedlineSettings settings, Action<string> log)
+internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, Action<string> log)
 {
     private const int MaxDrops = 384;
     private const int MaxFreshStains = 920;
@@ -166,7 +166,7 @@ internal sealed class BloodEffects(RedlineSettings settings, Action<string> log)
     }
 
     public bool Drip(Vector3 origin, Vector3 outward, Vector3 motion, float floor, int wallMask,
-        float scale, float pressure)
+        float scale, float pressure, ref bool playedWoundSound)
     {
         scale *= RedlineSettings.Factor(settings.WoundFlow);
         if (scale <= 0 || drops.Count == MaxDrops || Random.value > Mathf.Clamp01(scale * 1.2f) || !EnsureMesh())
@@ -187,6 +187,8 @@ internal sealed class BloodEffects(RedlineSettings settings, Action<string> log)
                 wallMask | Battlefield.RoomSolids | Battlefield.WalkableSurface, size, Random.Range(0.08f, 0.36f), Time.time + 0.9f, true, tint));
             woundDrops++;
         }
+        if (!playedWoundSound)
+            playedWoundSound = sounds.PlayBleed(origin, pressure);
         return true;
     }
 
