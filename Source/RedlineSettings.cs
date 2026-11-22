@@ -18,7 +18,7 @@ internal sealed class RedlineSettings
         Category = MelonPreferences.CreateCategory("Redline", "REDLINE");
         Category.SetFilePath("UserData/Redline.cfg");
         AmmoBonus = Category.CreateEntry("AmmoPickupBonus", 0.5f);
-        ReinforcementRate = Category.CreateEntry("ReinforcementRate", 0.5f);
+        ReinforcementRate = Category.CreateEntry("ReinforcementRate", 0f);
         ElsterTrauma = Category.CreateEntry("ElsterTrauma", true);
         ArianeFlash = Category.CreateEntry("ArianeFlash", true,
             description: "Enable the low-health Ariane flash and its F1 preview");

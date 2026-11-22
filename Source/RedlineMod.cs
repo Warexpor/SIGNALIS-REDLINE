@@ -379,6 +379,8 @@ public sealed partial class RedlineMod : MelonMod
         }
         else if (shot != null && active.settings.Ragdoll.Value && active.settings.HeavyOverkill.Value
             && pose != null && active.GetEnemy(__instance).CanRagdoll
+            && EnemyEffects.IsSupported(__instance) // MNHR, KNCR and ADLR keep stock combat and death.
+            && !__instance.queuedForRespawn // A queued respawn belongs to a scripted encounter. Leave it native.
             && __instance.staggerType is not (EnemyController.hurtState.critical or EnemyController.hurtState.fire)
             && InjuryRules.CanOverkill(shot.IsHeavy, before, incomingHp, __instance.Preset.HP))
         {

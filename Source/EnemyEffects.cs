@@ -559,7 +559,7 @@ internal sealed partial class EnemyEffects
         CancelSwipe();
         downed = true;
         QueuePool(amount * 1.95f, contact);
-        if (mayRagdoll && pose != null && rig.CanRagdoll && Target.hitbox && Target.hitbox.HP <= 0)
+        if (mayRagdoll && pose != null && rig.CanRagdoll && IsSupported(Target) && Target.hitbox && Target.hitbox.HP <= 0)
         {
             try
             {
