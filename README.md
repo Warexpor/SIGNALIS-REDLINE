@@ -10,11 +10,11 @@ Covers EULR, STAR, ARAR and STCR, plus waist-split and decapitation finishes on 
 - **Crawlers.** Losing a leg drops a Replika into a crawl instead of killing it. Losing both legs is fatal, and so is a lethal hit on a crawler. Crawlers swipe up close and can be finished with the stomp prompt.
 - **Corpse revival.** Revival blends from the resting pose and reachable severed parts drag back into place, unless **Reassemble on revival** is off.
 - **Weapon audio.** Recorded firing takes with rotation, a low thump under each report, wall-timed reflections and room reverb. Reload and handling sounds play from WAVs you add yourself (see below), otherwise stock cues play.
-- **World blood.** Directional spray, spreading pools and wall splatter. Everything clears when you return to the main menu.
-- **Ammo.** Pickups carry 50% extra rounds by default, applied after difficulty scaling.
-- **Elster injuries.** Heavy damage can damage her leg actuator or tear off her left arm. Repair items restore the leg at 40 HP and the arm at 60 HP.
+- **World blood.** Directional spray, spreading pools and wall splatter. Floor and wall stains blend with the scene as it is lit each frame, including moving character shadows. Stains survive revisits within a session and clear at the main menu.
+- **Elster injuries and stains.** Heavy damage can damage her leg actuator, causing a limp and slower movement. Repair items restore the leg at 40 HP. Nearby gore or taking a hit can stain her suit, and healing clears the stains.
+- **Mag caches.** A final kill or finishing stomp can drop a few rounds at the corpse for the gun that put it down. Caches use the game’s item catalog and are on by default. Toggle them under **F9 → Combat**.
 - **Ariane flash.** Hits that drop Elster to 1–15 HP can queue a brief portrait flash. The images cache automatically from your game files on first launch, so there is nothing to set up. Toggle under **F9 → Combat**, preview with F1.
-- **Panel and test keys.** F9 opens settings at the title, in gameplay or in the pause menu. F8 previews a leg cut, F10 revives a corpse in the room.
+- **Panel and test keys.** F9 opens settings at the title, in gameplay or in the pause menu. Under **System**, opt in to **F8 cut preview** or **F10 revival test**. F10 can revive a standard Replika in the room, including a permanent kill.
 
 ## Requirements
 
@@ -37,16 +37,25 @@ Optional handling recordings go under `UserData/RedlineAudio`. Enable **Weapon h
 | Folder | WAVs |
 | --- | --- |
 | `ShotgunHandling` | `rack-open.wav` and `rack-close.wav` for the timed pump, plus `shell-insert.wav` and `reload-accent.wav` |
-| `PistolHandling` | `mag-insert.wav` and `slide-forward.wav` |
-| `SmgHandling` | `mag-release.wav`, `mag-insert.wav`, and `action-close.wav` for the timed reload |
+| `PistolHandling` | `mag-release.wav`, `mag-insert.wav`, and `slide-forward.wav` |
+| `SmgHandling` | `mag-release.wav` and `mag-insert.wav` for the timed reload |
 | `RevolverHandling` | `cylinder-eject.wav`, `cartridge-insert.wav`, `cylinder-close.wav`, and `inventory-reload.wav`. Eject, insert, and inventory reload also support an `-alt` take |
 | `RifleHandling` | `breech-open.wav`, `cartridge-insert.wav`, and `breech-close.wav` |
 
 ## Known issues
 
-- **Reinforcements are unreliable and default off.** Encounter spawns often fail silently, so new installs ship with `ReinforcementRate = 0`. Leave it at 0% unless you are testing it.
-- **Blood stains on Elster do not appear.** World blood (spray, pools, walls) works; clothing stains currently do not show up. Under investigation.
-- **Scripted revives vs heavy kills.** MNHR, KNCR and ADLR always keep stock combat and death, so the heavy-shot overkill bypass and stomp ragdolls never touch them. Standard enemies with a queued respawn are also excluded from overkill. Overkill still consumes revives by design, so it can permanently kill adds that a boss would otherwise pick back up — turn off **Heavy-shot overkill** under System for such fights if you want the scripted revives intact. If downed enemies stay dead when the boss should revive them, report the boss/room plus the `overkill decision` lines from the verbose log.
+- **Reinforcements are experimental and default off.** Spawning depends on the room, eligible enemies and navigation. The verbose log records the room and spawn decision.
+- **Elster’s arm tear is disabled.** The leg injury remains available.
+- **Scripted revives.** MNHR, KNCR and ADLR keep stock combat and death. The ARARs linked to the Mynah and Falke fights also keep native combat so the bosses can revive them. The overkill bypass skips enemies with a queued respawn.
+
+## In-game checks
+
+1. Take a hit that stains Elster, heal, then take another hit. Compare `suitBlood` and `worldBlood` in the frame timings and check that healing clears the stains.
+2. Finish an enemy in a room with no matching ammo pickup. Check that the cache rests at the corpse, opens the native take prompt and grants the amount printed in the `mag cache` log. Turn off **Mag caches** under **Combat** and check that the next eligible kill leaves no ammo.
+3. Use a heavy weapon on an ARAR during the Mynah or Falke fight. Check that the boss can still bring it back and look for `overkill preserved native boss revival` in the log.
+4. Walk Elster or draw an enemy across fresh splatter, a pool and a dried stain. Check that the moving shadow stays continuous at each edge.
+5. In an eligible room, test reinforcements with the slider enabled. The log includes a room summary even when no enemies qualify.
+6. Check F9 on the title screen and in play. With the release defaults, F10 is idle. Enable it under **System** and check that it revives an ordinary corpse in the room.
 
 ## Build
 
@@ -57,13 +66,19 @@ python -m pip install -r requirements.txt
 python scripts/package.py
 ```
 
-For a custom Steam library, pass the directory containing `SIGNALIS.exe`:
+For a custom Steam library, pass the directory containing `SIGNALIS.exe`.
 
 ```powershell
 python scripts/package.py --game-dir "D:\SteamLibrary\steamapps\common\SIGNALIS"
 ```
 
-The script writes `dist/REDLINE-0.3.0.zip` with the DLL, skin map, audio, default config, README and license. For a DLL-only compile against the default Steam install, run `dotnet build Source/Redline.csproj -c Release`.
+The script writes `dist/REDLINE-<version>.zip` with the DLL, skin map, recorded shots and gore sounds, default config, README, changelog and license. For a DLL-only compile against the default Steam install, run `dotnet build Source/Redline.csproj -c Release`.
+
+## Source layout
+
+`Source/RedlineMod*.cs` wires the game hooks and updates. `EnemyEffects*.cs`, `Rig.cs` and `SkinCuts.cs` implement enemy injuries and recovery. `CombatWorld.cs` provides the shared gameplay and multiplayer state checks, and `MagCaches.cs` builds ammo pickups from catalog items. `BloodEffects.cs` batches spray and world stains, `BloodMaterial.cs` controls their rendering, and `ClothingBlood.cs` projects stains onto Elster’s textures. `WeaponAudio.cs` handles shots and reloads, with room acoustics in `GunshotAcoustics.cs`.
+
+`UserData/` holds release defaults and bundled audio. `Source/make_skin_map.py` generates bindings from the local game into `build/`. `scripts/package.py` assembles the player ZIP in `dist/`. See [CHANGELOG.md](CHANGELOG.md) for release changes.
 
 ## Credits
 

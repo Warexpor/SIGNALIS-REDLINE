@@ -43,7 +43,9 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
     private Mesh stainMesh;
     private Mesh poolMesh;
     private Mesh airborneMesh;
-    private Material material;
+    private Material decalMaterial;
+    private Material sprayMaterial;
+    private bool decalFog;
     private float nextLog;
     private int floorHits;
     private int wallHits;
@@ -149,7 +151,6 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         float sizeMultiplier = RedlineSettings.Factor(settings.Pools);
         if (scale <= 0 || sizeMultiplier <= 0 || !EnsureMesh())
             return;
-        lighting.Refresh(Time.time);
         origin = Battlefield.AtHeight(origin, floor + SurfaceOffset);
         float size = Mathf.Sqrt(Mathf.Clamp(scale, 0.08f, 2.5f)) * sizeMultiplier;
         Vector2 heading = Random.insideUnitCircle.normalized;
@@ -209,8 +210,6 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         if (now >= nextSettle)
             UpdateSettledStains(now);
         UploadSettledStains(now);
-        if (pools.Count != 0 && now >= nextPoolLighting)
-            RelightPools(now);
         if (now >= nextStainUpload && (stainsDirty || now >= nextMeshRefresh))
         {
             nextStainUpload = now + 0.040f;
@@ -237,7 +236,6 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
 
     private void TickDrops(float dt, float now)
     {
-        lighting.Refresh(now);
         var gravity = Battlefield.Down * DropGravity;
         for (int i = drops.Count - 1; i >= 0; i--)
         {
@@ -347,7 +345,7 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         var batch = pendingBatches.Dequeue();
         batch.Queued = false;
         if (!batch.Mesh)
-            batch.Mesh = CreateBatch("REDLINE Settled Blood", out batch.Owner);
+            batch.Mesh = CreateBatch("REDLINE Settled Blood", decalMaterial, out batch.Owner);
         ClearBatch();
         DrawStains(batch.Stains, now, false);
         Upload(batch.Mesh);
@@ -364,8 +362,9 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
             var travel = Vector3.ProjectOnPlane(drop.Velocity, normal);
             float stretch = Mathf.Clamp(1f + travel.magnitude * 0.10f, 1f, 2.5f);
             float size = drop.Size * (drop.FromWound ? 0.73f : 0.92f);
-            AddPolygon(drop.Position, normal, travel, size, stretch, drop.Tone, 0.25f, 5,
-                Mathf.Clamp01((drop.Expires - Time.time) * 8f) * 0.88f, new Shade(drop.Tint, drop.Tint, drop.Tint), BloodSurface.Drop);
+            float alpha = Mathf.Clamp01((drop.Expires - Time.time) * 8f) * 0.88f;
+            var tint = SpriteTint(drop.Tint, drop.Position, drop.Tone, alpha);
+            AddPolygon(drop.Position, normal, travel, size, stretch, 0.25f, 5, tint, BloodSurface.Drop);
         }
         Upload(airborneMesh);
     }
@@ -396,6 +395,9 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
     private float DrawStains(List<Splat> layer, float now, bool animate)
     {
         float refresh = float.PositiveInfinity;
+        bool spriteFallback = decalMaterial == sprayMaterial;
+        if (spriteFallback && layer.Count != 0)
+            lighting.Refresh(now);
         foreach (var stain in layer)
         {
             float age = now - stain.Start;
@@ -417,9 +419,12 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
             float dried = animate ? Mathf.Clamp01(age / dryTime) : 1f;
             float tone = Mathf.Min(1f, stain.Tone + 0.22f * dried);
             var position = pool ? stain.Position + stain.Offset * grow : stain.Position;
-            float alpha = pool && animate ? 0.95f * Mathf.Clamp01(age / 0.9f) : 0.95f;
-            AddPolygon(position, stain.Normal, stain.Direction, stain.Size * grow, stain.Stretch, tone,
-                stain.Seed, stain.Sides, alpha, stain.Lighting, stain.Surface);
+            float alpha = pool && animate ? Mathf.Clamp01(age / 0.9f) : 1f;
+            var tint = spriteFallback
+                ? SpriteTint(lighting.SurfaceTint(position, stain.Normal), position, tone, alpha * 0.95f)
+                : DecalTint(position, tone, alpha);
+            AddPolygon(position, stain.Normal, stain.Direction, stain.Size * grow, stain.Stretch,
+                stain.Seed, stain.Sides, tint, stain.Surface);
         }
         return refresh;
     }
@@ -428,8 +433,6 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
     private float nextStainUpload;
     private float nextPoolRefresh;
     private float nextPoolUpload;
-    private float nextPoolLighting;
-    private int poolLightIndex;
     private float nextSettle;
     private bool stainsDirty;
     private bool poolsDirty;
@@ -479,41 +482,44 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         floorHits = wallHits = merged = woundDrops = 0;
         nextLog = nextMeshRefresh = nextStainUpload = nextSettle = 0;
         nextPoolRefresh = nextPoolUpload = dropTime = 0;
-        nextPoolLighting = 0;
-        poolLightIndex = 0;
         if (root) Object.Destroy(root);
         if (stainMesh) Object.Destroy(stainMesh);
         if (poolMesh) Object.Destroy(poolMesh);
         if (airborneMesh) Object.Destroy(airborneMesh);
-        if (material) Object.Destroy(material);
+        if (decalMaterial && decalMaterial != sprayMaterial) Object.Destroy(decalMaterial);
+        if (sprayMaterial) Object.Destroy(sprayMaterial);
         root = null;
         stainMesh = poolMesh = airborneMesh = null;
-        material = null;
+        decalMaterial = sprayMaterial = null;
     }
 
     private bool EnsureMesh()
     {
         if (root)
             return true;
-        material = BloodMaterial.CreateSurface();
-        if (!material)
+        sprayMaterial = BloodMaterial.CreateSpray();
+        if (!sprayMaterial)
         {
             if (!shaderMissing) log("blood renderer unavailable: no compatible shader");
             shaderMissing = true;
             return false;
         }
-        log($"blood renderer shader={material.shader.name} texture=surface-atlas lighting=shadow-aware-room-colors");
+        decalMaterial = BloodMaterial.CreateDecals(out decalFog);
+        if (!decalMaterial)
+            decalMaterial = sprayMaterial;
+        string lightingMode = decalMaterial == sprayMaterial ? "sprite fallback" : "multiply scene color";
+        log($"blood renderer decals={decalMaterial.shader.name} queue={decalMaterial.renderQueue} lighting={lightingMode} spray={sprayMaterial.shader.name}");
         root = new GameObject("REDLINE Blood");
-        stainMesh = CreateBatch("REDLINE Stains", out _);
-        poolMesh = CreateBatch("REDLINE Pools", out _);
-        airborneMesh = CreateBatch("REDLINE Spray", out _);
+        stainMesh = CreateBatch("REDLINE Stains", decalMaterial, out _);
+        poolMesh = CreateBatch("REDLINE Pools", decalMaterial, out _);
+        airborneMesh = CreateBatch("REDLINE Spray", sprayMaterial, out _);
         foreach (var batch in level.Batches)
             QueueBatch(batch);
         poolsDirty = pools.Count != 0;
         return true;
     }
 
-    private Mesh CreateBatch(string name, out GameObject go)
+    private Mesh CreateBatch(string name, Material material, out GameObject go)
     {
         go = new GameObject(name);
         go.transform.SetParent(root.transform, false);
@@ -584,39 +590,10 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         }
         bool pool = layer == pools;
         var surface = pool ? BloodSurface.Pool : fromWound ? BloodSurface.Drop : BloodSurface.Impact;
-        var shade = SampleShade(pos + offset, normal, direction, size * stretch, pool && sides == PoolCoreSides);
         layer.Add(new Splat(pos, offset, normal, direction, size, stretch, tone, Random.Range(0, 6.28f), sides,
-            Time.time + delay, spreadTime, shade, surface));
+            Time.time + delay, spreadTime, surface));
         if (pool) poolsDirty = true;
         else stainsDirty = true;
-    }
-
-    private Shade SampleShade(Vector3 position, Vector3 normal, Vector3 direction, float width, bool poolCore)
-    {
-        var center = lighting.SurfaceTint(position, normal);
-        if (!poolCore)
-            return new Shade(center, center, center);
-        Vector3 extent = Tangent(direction, normal) * (width * 0.76f);
-        return new Shade(center, lighting.SurfaceTint(position - extent, normal), lighting.SurfaceTint(position + extent, normal));
-    }
-
-    private void RelightPools(float now)
-    {
-        nextPoolLighting = now + 0.15f;
-        lighting.Refresh(now);
-        // Keep existing pools responsive to room lights without scanning every pool in a busy frame.
-        for (int count = Math.Min(8, pools.Count); count > 0; count--)
-        {
-            poolLightIndex %= pools.Count;
-            int index = poolLightIndex++;
-            var pool = pools[index];
-            var shade = SampleShade(pool.Position + pool.Offset, pool.Normal, pool.Direction,
-                pool.Size * pool.Stretch, pool.Sides == PoolCoreSides);
-            if (shade == pool.Lighting)
-                continue;
-            pools[index] = pool with { Lighting = shade };
-            poolsDirty = true;
-        }
     }
 
     private bool MergeSettled(Vector3 pos, Vector3 normal, float size, bool fromWound)
@@ -651,17 +628,29 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         return false;
     }
 
-    private void AddPolygon(Vector3 pos, Vector3 normal, Vector3 direction, float size, float stretch, float tone,
-        float seed, int sides, float alpha, Shade shade, BloodSurface surface)
+    private Color32 DecalTint(Vector3 position, float tone, float alpha)
+    {
+        if (!decalFog)
+            alpha *= 1f - Mathf.Clamp01(BloodFog.Factor(position));
+        byte pigment = (byte)(255f * Mathf.Lerp(1f, 0.55f, tone));
+        return new Color32(pigment, pigment, pigment, (byte)(255f * alpha));
+    }
+
+    private static Color32 SpriteTint(Color32 color, Vector3 position, float tone, float alpha)
+    {
+        float dry = Mathf.Lerp(1f, 0.55f, tone);
+        return BloodFog.Apply(new Color32((byte)(color.r * dry), (byte)(color.g * dry),
+            (byte)(color.b * dry), (byte)(255f * alpha)), BloodFog.Factor(position));
+    }
+
+    private void AddPolygon(Vector3 pos, Vector3 normal, Vector3 direction, float size, float stretch,
+        float seed, int sides, Color32 tint, BloodSurface surface)
     {
         Vector3 right = Tangent(direction, normal);
         Vector3 up = Vector3.Cross(normal, right);
         int first = points.Count;
         int variants = surface == BloodSurface.Impact ? BloodTexture.ImpactVariants : BloodTexture.Variants;
         int variant = (int)(seed * 27f) % variants;
-        float dry = Mathf.Lerp(1f, 0.55f, tone);
-        byte opacity = (byte)(255f * alpha);
-        var tint = Color(shade.Center);
         points.Add(pos);
         colors.Add(tint);
         textureCoordinates.Add(BloodMaterial.SurfaceUv(0.5f, 0.5f, variant, surface));
@@ -675,16 +664,7 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
             float height = y * edge;
             points.Add(new Vector3(pos.x + right.x * width + up.x * height,
                 pos.y + right.y * width + up.y * height, pos.z + right.z * width + up.z * height));
-            if (surface == BloodSurface.Pool)
-            {
-                var side = x < 0 ? shade.Left : shade.Right;
-                float mix = Math.Abs(x);
-                var center = shade.Center;
-                colors.Add(new Color32((byte)((center.r + (side.r - center.r) * mix) * dry),
-                    (byte)((center.g + (side.g - center.g) * mix) * dry),
-                    (byte)((center.b + (side.b - center.b) * mix) * dry), opacity));
-            }
-            else colors.Add(tint);
+            colors.Add(tint);
             textureCoordinates.Add(BloodMaterial.SurfaceUv(0.5f + 0.5f * x, 0.5f + 0.5f * y, variant, surface));
         }
         for (int j = 0; j < sides; j++)
@@ -693,9 +673,6 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
             indices.Add(first + 1 + j);
             indices.Add(first + 1 + (j + 1) % sides);
         }
-
-        Color32 Color(Color32 color) => new((byte)(color.r * dry), (byte)(color.g * dry),
-            (byte)(color.b * dry), opacity);
     }
 
     private static Vector3 Tangent(Vector3 direction, Vector3 normal)
@@ -734,7 +711,6 @@ internal sealed class BloodEffects(RedlineSettings settings, CutSounds sounds, A
         }
     }
 
-    private readonly record struct Shade(Color32 Center, Color32 Left, Color32 Right);
     private readonly record struct Splat(Vector3 Position, Vector3 Offset, Vector3 Normal, Vector3 Direction, float Size,
-        float Stretch, float Tone, float Seed, int Sides, float Start, float SpreadTime, Shade Lighting, BloodSurface Surface);
+        float Stretch, float Tone, float Seed, int Sides, float Start, float SpreadTime, BloodSurface Surface);
 }

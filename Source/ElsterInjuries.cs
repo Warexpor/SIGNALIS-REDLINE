@@ -20,6 +20,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
     private int armStress;
     private bool needsLoad = true;
     private bool newSever;
+    private bool gatedLogged;
     private bool skinPrepared;
     private float repairUntil;
     private float noticeUntil;
@@ -38,7 +39,14 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
     public void Hit(int before, Vector2 direction)
     {
         if (!CombatWorld.Playing || !Enabled || CombatWorld.Networked)
+        {
+            if (!gatedLogged)
+            {
+                gatedLogged = true;
+                log($"elster trauma gated injuries={settings.ElsterTrauma.Value} gameOver={PlayerState.gameOver} {CombatWorld.DescribePlaying()} {CombatWorld.Describe()}");
+            }
             return;
+        }
         int hp = PlayerState.hp;
         int lost = before - hp;
         if (lost <= 0 || hp <= 0)
@@ -48,8 +56,9 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
         armStress = Math.Min(100, armStress + lost);
         if (lost >= 10 && hp <= 74)
             trauma |= Trauma.Leg;
-        if (hp <= 48 && (lost >= 17 || armStress >= 55))
-            trauma |= Trauma.Arm;
+        // Arm tear disabled for now. Re-enable with the load mask below.
+        // if (hp <= 48 && (lost >= 15 || armStress >= 40))
+        //     trauma |= Trauma.Arm;
         if (previous == trauma)
             return;
 
@@ -107,7 +116,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
     {
         if (!needsLoad || !SProgress.progress)
             return;
-        trauma = (Trauma)(SProgress.GetInt(SaveKey, 0) & (int)(Trauma.Leg | Trauma.Arm));
+        trauma = (Trauma)(SProgress.GetInt(SaveKey, 0) & (int)Trauma.Leg); // Arm masked out while disabled.
         needsLoad = false;
     }
 
@@ -175,6 +184,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
 
     private void PrepareSkins(AlternatePlayerController player)
     {
+        string examined = "";
         foreach (var renderer in player.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
             var mesh = renderer ? renderer.sharedMesh : null;
@@ -182,6 +192,7 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
                 or "BodyUncrippled_Armless" or "Chest_Armor") || renderer.bones.Length == 0)
                 continue;
             var binding = map.Find(renderer, rig);
+            examined += $"{mesh.name}:{mesh.vertexCount}/{mesh.subMeshCount} bones={renderer.bones.Length} binding={binding != null} arm={binding != null && Array.IndexOf(binding.Labels, (byte)SupportArm) >= 0}; ";
             if (binding == null || Array.IndexOf(binding.Labels, (byte)SupportArm) < 0)
                 continue;
             var skin = new SkinCut(renderer, binding);
@@ -196,6 +207,8 @@ internal sealed class ElsterInjuries(RedlineSettings settings, SkinMap map, Effe
         }
         skinPrepared = skins.Count != 0;
         log($"elster arm visual bindings={skins.Count}");
+        if (skins.Count == 0)
+            log($"elster arm no binding {examined}");
     }
 
     private void Sever()

@@ -67,6 +67,9 @@ internal sealed class Rig
 
     public bool CanCrawl => Hips && Chest && LeftArm && RightArm && LeftForearm && RightForearm && LeftHand && RightHand;
     public bool CanRagdoll => Hips && Chest && Head && (LeftArm || RightArm) && (LeftThigh || RightThigh);
+    // Measured hip height in a healthy stance. Tall units like STCR need their
+    // own scale instead of the arm-span guess used before any measurement.
+    public float ModelHeight { get; set; }
 
     public List<ImpactCuts.Zone> HitZones(int missing)
     {
@@ -224,7 +227,8 @@ internal sealed class Rig
         if (front.sqrMagnitude < 0.01f)
             front = Battlefield.OnPlane(Chest.forward).normalized;
         Vector3 right = Vector3.Cross(Battlefield.Up, front);
-        float height = Mathf.Clamp(Vector3.Distance(LeftArm.position, RightArm.position) * 3.3f, 6f, 12f);
+        float height = ModelHeight > 0f ? ModelHeight
+            : Mathf.Clamp(Vector3.Distance(LeftArm.position, RightArm.position) * 3.3f, 6f, 12f);
         float bob = Mathf.Sin(phase * 2) * 0.025f * movement;
         float pull = Mathf.Sin(phase) * 0.07f * movement;
 

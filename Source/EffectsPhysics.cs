@@ -25,13 +25,8 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
     private readonly Dictionary<string, List<DetachedLimb>> levelLimbs = new();
     private readonly List<DetachedLimb> movingLimbs = new();
     private string level = "";
-    private bool sampledPlayer;
-    private Vector3 previousPlayer;
-    private Vector3 sampledFloorAt;
-    private float playerFloor;
 
     public float SimulatedTimeThisFrame { get; private set; }
-    private Footstep PlayerStep { get; set; }
     public RagdollTuning LaunchTuning => new(settings.ExtremeRagdoll.Value, RedlineSettings.Factor(settings.ThrowSpeed),
         RedlineSettings.Factor(settings.Lift), RedlineSettings.Factor(settings.Spin));
 
@@ -194,13 +189,9 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
 
     public void Tick()
     {
-        SamplePlayerStep();
         SimulatedTimeThisFrame = 0;
         if (scene.IsValid() && physics.IsValid() && bodies.Count != 0)
         {
-            if (PlayerStep.Moving)
-                foreach (var limb in movingLimbs)
-                    limb.Nudge(PlayerStep);
             time += Mathf.Min(Time.deltaTime, MaxFrameTime);
             while (time >= Step)
             {
@@ -222,65 +213,10 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
             limb.Freeze();
             movingLimbs.RemoveAt(i);
         }
-        if (levelLimbs.TryGetValue(level, out var limbs))
-            foreach (var limb in limbs)
-                limb.SlideOnFloor(PlayerStep);
-    }
-
-    private void SamplePlayerStep()
-    {
-        PlayerStep = default;
-        if (!settings.DebrisPush.Value)
-        {
-            sampledPlayer = false;
-            return;
-        }
-        var controller = PlayerState.pcs;
-        var player = PlayerState.player;
-        if (!player || !player.activeInHierarchy || PlayerState.noplayer || PlayerState.cutscene || PlayerState.menu
-            || PlayerState.animating || PlayerState.grappled)
-        {
-            sampledPlayer = false;
-            return;
-        }
-        // Sample the live locomotion transform, including movement between rigidbody steps.
-        var position = controller ? controller.transform.position : player.transform.position;
-        var start = previousPlayer;
-        previousPlayer = position;
-        if (!sampledPlayer)
-        {
-            sampledPlayer = true;
-            sampledFloorAt = position;
-            playerFloor = Battlefield.FloorBelow(position, Battlefield.Height(position));
-            return;
-        }
-        var move = Battlefield.OnPlane(position - start);
-        float distance = move.magnitude;
-        float speed = distance / Mathf.Max(0.004f, Time.deltaTime);
-        if (distance > 2.8f || Mathf.Abs(position.z - start.z) > 0.85f)
-            return;
-        if ((position - sampledFloorAt).sqrMagnitude > 0.81f || Mathf.Abs(position.z - sampledFloorAt.z) > 0.25f)
-        {
-            sampledFloorAt = position;
-            playerFloor = Battlefield.FloorBelow(position, Battlefield.Height(position));
-        }
-        if (speed >= 0.75f)
-        {
-            PlayerStep = new Footstep(start, position, move / distance, speed, playerFloor);
-            return;
-        }
-        if (!controller || !controller.character || controller.traversing || PlayerState.suspendInput
-            || controller.input.sqrMagnitude < 0.04f)
-            return;
-        var intent = Battlefield.OnPlane(controller.character.inputAxis);
-        if (intent.sqrMagnitude > 0.04f)
-            PlayerStep = new Footstep(position, position, intent.normalized, 4.8f, playerFloor);
     }
 
     public void SetLevel(string label)
     {
-        sampledPlayer = false;
-        PlayerStep = default;
         if (label is "StartupPC" or "MainMenu")
             ClearLimbs();
         if (label == level)
@@ -300,10 +236,7 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
             return;
         foreach (var limb in limbs)
             if (limb.Visual)
-            {
-                limb.StopSlide();
                 limb.Visual.SetActive(visible);
-            }
         log($"retained limbs level={label} visible={visible} count={limbs.Count}");
     }
 
@@ -319,8 +252,8 @@ internal sealed class EffectsPhysics(RedlineSettings settings, Action<string> lo
 
 internal readonly record struct RagdollTuning(bool Extreme, float Throw, float Lift, float Spin)
 {
-    public float Push(float speed) => Mathf.Min(Extreme ? 15f : 10.5f, Throw * speed * (Extreme ? 1.42f : 1f));
-    public float VerticalSpeed(float speed) => Mathf.Clamp(speed * Lift, -1.7f, Extreme ? 2.4f : 1.3f);
+    public float Push(float speed) => Mathf.Min(Extreme ? 30f : 22f, Throw * speed * (Extreme ? 1.42f : 1f));
+    public float VerticalSpeed(float speed) => Mathf.Clamp(speed * Lift, -2.5f, Extreme ? 6f : 4f);
     public Vector3 AngularSpeed(Vector3 velocity) => Vector3.ClampMagnitude(velocity * Spin, Extreme ? 3.1f : 1.8f);
 }
 
@@ -346,7 +279,6 @@ internal sealed class DetachedLimb(EffectsPhysics physics, GameObject body, Game
     private Vector3 previousLaunchPosition;
     private float parkedFloor;
     private DebrisContact parkedContact;
-    private GroundSlide slide;
     private Vector3 proxyCenter;
     public string Diagnostics { get; private set; }
     public string RetainedLevel { get; set; }
@@ -380,8 +312,8 @@ internal sealed class DetachedLimb(EffectsPhysics physics, GameObject body, Game
     public void Launch(Vector3 direction, bool fling)
     {
         var scatter = Random.insideUnitCircle * (fling ? 0.85f : 0.28f);
-        float speed = fling ? Random.Range(4.8f, 7.8f) : Random.Range(0.7f, 1.65f);
-        float lift = fling ? Random.Range(0.48f, 1.10f) : Random.Range(-0.36f, 0.24f);
+        float speed = fling ? Random.Range(9f, 15f) : Random.Range(0.7f, 1.65f);
+        float lift = fling ? Random.Range(1.8f, 3.4f) : Random.Range(-0.36f, 0.24f);
         var velocity = direction * speed + new Vector3(scatter.x, scatter.y, 0)
             + Battlefield.Up * lift;
         Launch(velocity, Random.onUnitSphere * (fling ? Random.Range(3.5f, 6.5f) : Random.Range(1.4f, 3.2f)), 1.3f);
@@ -425,49 +357,9 @@ internal sealed class DetachedLimb(EffectsPhysics physics, GameObject body, Game
 
     public void IgnoreContact(DetachedLimb other) => Physics.IgnoreCollision(shape, other.shape);
 
-    public void Nudge(Footstep foot)
-    {
-        if (!foot.Moving || !rigid || !shape || Mathf.Abs(floorHeight - foot.Floor) > 1.1f)
-            return;
-        var bounds = shape.bounds;
-        if (bounds.max.z < -foot.Floor - 0.95f)
-            return;
-        var contact = Footprint(bounds.center, rigid.rotation);
-        var drive = foot.Push(contact);
-        if (drive.sqrMagnitude < 0.01f || DebrisContact.LimitTravel(contact.Center, drive * 0.05f, floorHeight, contact.Radius) == Vector3.zero)
-            return;
-        contactTime = quietTime = 0;
-        DebrisContact.PushRigid(rigid, drive);
-    }
-
-    public void SlideOnFloor(Footstep foot)
-    {
-        if (!parked || returning || !Visual || (!foot.Moving && !slide.Moving))
-            return;
-        var drive = foot.Push(parkedContact);
-        var move = slide.Advance(drive, 19f);
-        if (move == Vector3.zero)
-            return;
-        var allowed = DebrisContact.LimitTravel(parkedContact.Start, move, parkedFloor, parkedContact.Radius);
-        allowed = DebrisContact.LimitTravel(parkedContact.End, allowed, parkedFloor, parkedContact.Radius);
-        if (allowed == Vector3.zero)
-        {
-            slide.Stop();
-            return;
-        }
-        float floor = Battlefield.FloorBelow(parkedContact.Center + allowed, parkedFloor);
-        allowed += Battlefield.Up * (floor - parkedFloor);
-        parkedFloor = floor;
-        Visual.transform.position += allowed;
-        parkedContact = parkedContact.Translate(allowed);
-    }
-
-    public void StopSlide() => slide.Stop();
-
     public void HoldForReturn()
     {
         Freeze();
-        slide.Stop();
         parkedPosition = Visual.transform.position;
         parkedRotation = Visual.transform.rotation;
         returning = true;
@@ -729,7 +621,7 @@ internal sealed class BodyRagdoll
             Vector3 direction = hit.sqrMagnitude > 0.01f ? hit.normalized : -forward;
             float energy = Mathf.Clamp01((strength - 0.54f) / 0.86f);
             float push = tuning.Push(collapse ? 0.60f : stomp ? 1.05f : InjuryRules.LaunchPush(strength, upright, rifle));
-            float lift = collapse ? -0.45f : stomp ? -0.84f : Mathf.Lerp(0.07f, 0.21f + energy * 0.24f, upright);
+            float lift = collapse ? -0.45f : stomp ? -0.84f : Mathf.Lerp(0.15f, 0.55f + energy * 0.65f, upright);
             var lever = Vector3.ClampMagnitude((point ?? rig.Chest.position) - center, 2.1f);
             var tumble = Vector3.Cross(Battlefield.Up, direction);
             var spin = Vector3.Cross(lever, direction) * 0.20f + tumble * (stomp || collapse ? 0 : upright * (0.60f + energy * 0.28f));

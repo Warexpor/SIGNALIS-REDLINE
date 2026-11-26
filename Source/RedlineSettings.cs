@@ -8,17 +8,18 @@ internal sealed class RedlineSettings
     public readonly MelonPreferences_Category Category;
     public readonly MelonPreferences_Entry<float> Blood, Spray, Pools, WoundFlow, ElsterStains;
     public readonly MelonPreferences_Entry<float> CutSensitivity, WaistChance, ThrowSpeed, Lift, Spin, CutVolume;
-    public readonly MelonPreferences_Entry<float> AmmoBonus, ReinforcementRate, GunshotVolume, GunshotRoom, HandlingVolume;
-    public readonly MelonPreferences_Entry<bool> ElsterTrauma, ArianeFlash, RecordedGunshots, WeaponHandling;
+    public readonly MelonPreferences_Entry<float> ReinforcementRate, GunshotVolume, GunshotRoom, HandlingVolume;
+    public readonly MelonPreferences_Entry<bool> MagCaches, ElsterTrauma, ArianeFlash, RecordedGunshots, WeaponHandling;
     public readonly MelonPreferences_Entry<bool> WallSplatter, Dismember, Crawl, Decapitation, Reassemble, Ragdoll,
-        ExtremeRagdoll, DebrisPush, HeavyOverkill, DiagnosticLog, ScenePreview, RevivalTest;
+        ExtremeRagdoll, HeavyOverkill, DiagnosticLog, ScenePreview, RevivalTest;
 
     public RedlineSettings()
     {
         Category = MelonPreferences.CreateCategory("Redline", "REDLINE");
         Category.SetFilePath("UserData/Redline.cfg");
-        AmmoBonus = Category.CreateEntry("AmmoPickupBonus", 0.5f);
         ReinforcementRate = Category.CreateEntry("ReinforcementRate", 0f);
+        MagCaches = Category.CreateEntry("MagCaches", true,
+            description: "Let eligible final kills and finishing stomps drop ammo");
         ElsterTrauma = Category.CreateEntry("ElsterTrauma", true);
         ArianeFlash = Category.CreateEntry("ArianeFlash", true,
             description: "Enable the low-health Ariane flash and its F1 preview");
@@ -51,14 +52,13 @@ internal sealed class RedlineSettings
         ThrowSpeed = Category.CreateEntry("RagdollThrowMultiplier", 1.15f);
         Lift = Category.CreateEntry("RagdollLiftMultiplier", 1f);
         Spin = Category.CreateEntry("RagdollSpinMultiplier", 1f);
-        DebrisPush = Category.CreateEntry("DebrisPush", true);
         HeavyOverkill = Category.CreateEntry("HeavyOverkill", true);
         CutVolume = Category.CreateEntry("CutVolumeMultiplier", 1f);
         DiagnosticLog = Category.CreateEntry("DiagnosticLog", true);
         ScenePreview = Category.CreateEntry("ScenePreviewF8", false,
             description: "F8 previews a leg hit on the nearest active enemy without dealing damage");
-        RevivalTest = Category.CreateEntry("RevivalTestF10", true,
-            description: "F10 revives corpses in the room, including permanent deaths");
+        RevivalTest = Category.CreateEntry("RevivalTestF10", false,
+            description: "F10 revives standard Replika corpses in the room, including permanent deaths");
         Category.SaveToFile(false);
     }
 

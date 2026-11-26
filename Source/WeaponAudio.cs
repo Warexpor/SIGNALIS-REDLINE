@@ -17,8 +17,8 @@ internal sealed class WeaponAudio(RedlineSettings settings, Action<string> log)
     private const string PumpShort = ShotgunEvent + "PumpShort";
     private const string Pump = ShotgunEvent + "Pump";
     private const string ShellInsert = ShotgunEvent + "Insert";
-    private static readonly HandlingCue rackOpen = new(new("ShotgunHandling/rack-open", 79, 102), Gain: 0.24f);
-    private static readonly HandlingCue rackClose = new(new("ShotgunHandling/rack-close", 90, 107), Gain: 0.25f);
+    private static readonly HandlingCue rackOpen = new(new("ShotgunHandling/rack-open", 79, 102), Gain: 0.30f);
+    private static readonly HandlingCue rackClose = new(new("ShotgunHandling/rack-close", 90, 107), Gain: 0.31f);
     private static readonly HandlingCue shell = new(new("ShotgunHandling/shell-insert", 79, 61), Gain: 0.17f);
     private static readonly HandlingCue pistolOut = new(new("PistolHandling/mag-release", 104, 130));
     private static readonly HandlingCue pistolIn = new(new("PistolHandling/mag-insert", 101, 85));

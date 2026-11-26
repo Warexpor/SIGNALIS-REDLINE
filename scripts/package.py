@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile
 
 
@@ -39,18 +40,19 @@ def main():
 
     package = ROOT / "dist" / f"REDLINE-{version}.zip"
     package.parent.mkdir(exist_ok=True)
-    with ZipFile(package, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.write(dll, "Mods/Redline.dll")
-        archive.write(skin_map, "UserData/RedlineSkinMap.gz")
-        for file in ("LICENSE", "README.md", "UserData/Redline.cfg"):
-            archive.write(ROOT / file, file)
-        audio = ROOT / "UserData/RedlineAudio"
-        for file in sorted(audio.iterdir()):
-            if file.is_file() and file.suffix in {".md", ".wav"}:
-                archive.write(file, file.relative_to(ROOT).as_posix())
-        for file in sorted((audio / "Gore").glob("*")):
-            if file.is_file() and file.suffix in {".md", ".wav"}:
-                archive.write(file, file.relative_to(ROOT).as_posix())
+    with TemporaryDirectory(dir=package.parent) as staging:
+        pending = Path(staging) / package.name
+        with ZipFile(pending, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
+            archive.write(dll, "Mods/Redline.dll")
+            archive.write(skin_map, "UserData/RedlineSkinMap.gz")
+            for file in ("LICENSE", "README.md", "CHANGELOG.md", "UserData/Redline.cfg"):
+                archive.write(ROOT / file, file)
+            audio = ROOT / "UserData/RedlineAudio"
+            for directory in (audio, audio / "Gore"):
+                for file in sorted(directory.iterdir()):
+                    if file.is_file() and file.suffix in {".md", ".wav"}:
+                        archive.write(file, file.relative_to(ROOT).as_posix())
+        pending.replace(package)
 
     print(f"Created {package}")
 

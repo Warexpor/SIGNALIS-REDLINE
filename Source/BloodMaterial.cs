@@ -5,12 +5,16 @@ namespace Redline;
 internal static class BloodMaterial
 {
     private const int Tones = 32;
+    private const string SpriteShader = "Sprites/Default";
+    private const string MultiplyShader = "Legacy Shaders/Particles/Multiply";
+    // The floor already contains its real-time shadows when the transparent queue starts.
+    private const int DecalQueue = (int)UnityEngine.Rendering.RenderQueue.GeometryLast + 1;
     private static Texture2D palette;
     private static Texture2D surface;
 
     public static Material CreateCutSurface()
     {
-        var shader = Shader.Find("Sprites/Default");
+        var shader = Shader.Find(SpriteShader);
         if (!shader)
             return null;
         if (!palette)
@@ -29,14 +33,30 @@ internal static class BloodMaterial
             palette.SetPixels32(pixels);
             palette.Apply(false, true);
         }
-        return new Material(shader) { name = "REDLINE Cut Surface", mainTexture = palette };
+        return new Material(shader) { name = "REDLINE Cut Surface", mainTexture = palette, renderQueue = 2450 };
     }
 
-    public static Material CreateSurface()
+    public static Material CreateSpray()
     {
-        var shader = Shader.Find("Sprites/Default");
+        var shader = Shader.Find(SpriteShader);
         if (!shader)
             return null;
+        return new Material(shader) { name = "REDLINE Spray", mainTexture = SurfaceAtlas(), renderQueue = 2450 };
+    }
+
+    public static Material CreateDecals(out bool shaderFog)
+    {
+        var shader = Shader.Find(MultiplyShader);
+        shaderFog = shader && shader.isSupported;
+        if (!shaderFog)
+            shader = Shader.Find("Sprites/Multiply");
+        return shader && shader.isSupported
+            ? new Material(shader) { name = "REDLINE Blood Decals", mainTexture = SurfaceAtlas(), renderQueue = DecalQueue }
+            : null;
+    }
+
+    private static Texture2D SurfaceAtlas()
+    {
         if (!surface)
         {
             const int cell = BloodTexture.Cell;
@@ -63,7 +83,7 @@ internal static class BloodMaterial
             surface.SetPixels32(pixels);
             surface.Apply(false, true);
         }
-        return new Material(shader) { name = "REDLINE Blood", mainTexture = surface };
+        return surface;
     }
 
     public static Vector2 SurfaceUv(float x, float y, int variant, BloodSurface surface)

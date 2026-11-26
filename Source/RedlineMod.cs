@@ -14,7 +14,7 @@ namespace Redline;
 
 public sealed partial class RedlineMod : MelonMod
 {
-    internal const string Version = "0.3.0";
+    internal const string Version = "0.3.1";
     private static RedlineMod active;
     private static readonly System.Random overkillRandom = new();
     private readonly Dictionary<int, EnemyEffects> enemies = new();
@@ -348,6 +348,12 @@ public sealed partial class RedlineMod : MelonMod
             || __instance.state == EnemyController.enemystate.dead)
             return;
         int id = __instance.GetInstanceID();
+        if (__instance.Preset.Type == AnEnemy.AnEnemyType.ARAR && CombatWorld.IsBossMinion(__instance))
+        {
+            if (shot?.IsHeavy == true)
+                active.Log($"overkill preserved native boss revival shot={shot.Id} enemy={id}");
+            return;
+        }
         // The flare gun has its own shot type. The delayed Thermite Flare calls TakeDamage with 100% fire chance.
         if (shot?.IsFlare == true || __0 >= 100f)
         {
@@ -370,7 +376,7 @@ public sealed partial class RedlineMod : MelonMod
         bool critical = __instance.staggerType == EnemyController.hurtState.critical;
         int? savedRevives = null;
         bool crawler = active.enemies.TryGetValue(id, out var tracked) && tracked.EnteredCrawl;
-        if (crawler)
+        if (crawler && !__instance.queuedForRespawn)
         {
             // Native damage restores HP and starts Critical when a lethal hit can consume a revive.
             savedRevives = __instance.revives;
@@ -386,7 +392,7 @@ public sealed partial class RedlineMod : MelonMod
         {
             int fullHealth = __instance.Preset.HP;
             int revives = __instance.revives;
-            bool canRecover = revives > 0 || __instance.queuedForRespawn;
+            bool canRecover = revives > 0;
             float chance = canRecover ? InjuryRules.OverkillChance(before, incomingHp, fullHealth, shot.Rifle) : 1f;
             double roll = canRecover ? shot.OverkillRoll(id) : 0d;
             bool bypass = roll < chance;
@@ -398,7 +404,8 @@ public sealed partial class RedlineMod : MelonMod
                 __instance.revives = 0;
             }
         }
-        __state = new DamageSnapshot(true, shot, pose, contacts, incomingHp, before, critical, __state.PreviousSquibs, savedRevives, crawler);
+        __state = new DamageSnapshot(true, shot, pose, contacts, incomingHp, before, critical, __state.PreviousSquibs, savedRevives,
+            crawler && savedRevives.HasValue);
         active.Log($"damage begin shot={shot?.Id ?? 0} enemy={id} state={__instance.state} beforeHp={before:F1} incomingHp={incomingHp} critical={critical} rays={contacts?.Rays.Count ?? 0} poseSource={(contacts?.Pose != null ? "ray" : pose != null ? "damage" : "none")}");
     }
 
@@ -814,6 +821,7 @@ public sealed partial class RedlineMod : MelonMod
         long afterPoses = measure ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         try { blood.Tick(); }
         catch (Exception ex) { WarnOnce("blood", ex); }
+        long afterWorldBlood = measure ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         try { elsterBlood.Tick(settings.BloodDensity); }
         catch (Exception ex) { WarnOnce("elster blood", ex); }
         if (measure)
@@ -830,7 +838,8 @@ public sealed partial class RedlineMod : MelonMod
                 Log($"frame timing previous={frameMs:F1}ms previousLateUpdate={previousModMs:F1}ms lateUpdate={modMs:F1}ms " +
                     $"warmup={(afterWarmup - started) * ms:F1}ms impacts={(afterImpacts - afterWarmup) * ms:F1}ms " +
                     $"combat={(afterCombat - afterImpacts) * ms:F1}ms physics={(afterPhysics - afterCombat) * ms:F1}ms " +
-                    $"poses={(afterPoses - afterPhysics) * ms:F1}ms blood={(finished - afterPoses) * ms:F1}ms");
+                    $"poses={(afterPoses - afterPhysics) * ms:F1}ms worldBlood={(afterWorldBlood - afterPoses) * ms:F1}ms " +
+                    $"suitBlood={(finished - afterWorldBlood) * ms:F1}ms");
             }
             lastMeasuredFrame = frame;
             lastLateUpdateMs = modMs;
@@ -910,6 +919,13 @@ public sealed partial class RedlineMod : MelonMod
         }
 
         var enemy = GetEnemy(target);
+        try
+        {
+            var weapon = impact.Shot.Weapon;
+            if (!impact.Preview && !impact.ProneHit && weapon && weapon.parentItem)
+                enemy.NoteKillerAmmo(weapon.parentItem._item);
+        }
+        catch (Exception ex) { Log($"killer ammo note failed: {ex.GetType().Name}"); }
         Vector3? point = null;
         Vector3 shotDirection = Battlefield.OnPlane(target.transform.position - impact.Shot.Origin).normalized;
         if (impact.Rays.Length > 0)
@@ -957,6 +973,8 @@ public sealed partial class RedlineMod : MelonMod
         try { panel?.Close(resume: false); }
         catch (Exception ex) { WarnOnce("settings scene change", ex); }
         scene = sceneName;
+        try { CombatWorld.RefreshBossNests(); }
+        catch (Exception ex) { WarnOnce("scripted boss revivals", ex); }
         weaponAudio?.ClearRoom();
         Log($"scene loaded index={buildIndex} actors={enemies.Count} discardedImpacts={impacts.Count}");
         impacts.Clear();

@@ -158,12 +158,12 @@ internal sealed class WaistSplit : IDisposable
                 : Battlefield.OnPlane(target.transform.forward).normalized;
             Vector3 roll = Vector3.Cross(Battlefield.Up, push);
             var tuning = physics.LaunchTuning;
-            upper.Launch(push * tuning.Push(rifle ? 6.4f : 5.55f)
-                + Battlefield.Up * tuning.VerticalSpeed(tuning.Extreme ? 1.55f : 0.54f),
-                tuning.AngularSpeed(roll * (tuning.Extreme ? 2.15f : 1.46f)), 10f, trackWalls: true);
-            lower.Launch(push * tuning.Push(rifle ? 3.3f : 2.55f)
-                + Battlefield.Up * tuning.VerticalSpeed(tuning.Extreme ? 0.62f : 0.11f),
-                tuning.AngularSpeed(roll * (tuning.Extreme ? 1.25f : 0.82f)), 8f, trackWalls: true);
+            upper.Launch(push * tuning.Push(rifle ? 16f : 11f)
+                + Battlefield.Up * tuning.VerticalSpeed(tuning.Extreme ? 3.4f : 2.1f),
+                tuning.AngularSpeed(roll * (tuning.Extreme ? 2.6f : 1.8f)), 10f, trackWalls: true);
+            lower.Launch(push * tuning.Push(rifle ? 7.5f : 5.5f)
+                + Battlefield.Up * tuning.VerticalSpeed(tuning.Extreme ? 1.8f : 1f),
+                tuning.AngularSpeed(roll * (tuning.Extreme ? 1.6f : 1f)), 8f, trackWalls: true);
             upper.IgnoreContact(lower);
             split.HideOriginals();
             log($"waist split started rim={bestPerimeter:F2} point={Battlefield.Format(wound)} upper={upper.Diagnostics} lower={lower.Diagnostics} extreme={tuning.Extreme}");

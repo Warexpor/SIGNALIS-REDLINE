@@ -732,6 +732,9 @@ internal sealed class CutCap
         if (lit && shaded.r == tint.r && shaded.g == tint.g && shaded.b == tint.b)
             return;
         tint = shaded;
+        float fog = BloodFog.Factor(sample);
+        if (fog > 0f)
+            tint = BloodFog.Apply(tint, fog);
         lit = true;
         for (int i = 0; i < boundary.Length; i++)
             colors[i] = tint;

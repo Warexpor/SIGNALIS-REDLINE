@@ -52,9 +52,9 @@ internal sealed class RedlinePanel
         {
             new Section("Combat", new[]
             {
-                Slider("Ammo pickup bonus", "Extra rounds in freshly opened ammo pickups.", settings.AmmoBonus, suffix: "%"),
                 Slider("Reinforcements", "Adds enemies to eligible rooms on first entry.", settings.ReinforcementRate, maximum: 1f, suffix: "%"),
-                Switch("Elster injuries", "Serious hits can damage Elster's leg or sever her support arm.", settings.ElsterTrauma),
+                Switch("Mag caches", "Let eligible final kills and finishing stomps drop ammo.", settings.MagCaches),
+                Switch("Elster injuries", "Heavy leg hits can damage Elster's leg actuator. Arm tear is disabled for now.", settings.ElsterTrauma),
                 Switch("Ariane flash", "Show Ariane flashes on low-health hits and allow the F1 preview.", settings.ArianeFlash)
             }),
             new Section("Audio", new[]
@@ -91,8 +91,7 @@ internal sealed class RedlinePanel
                 Switch("Extreme ragdoll", "Give heavy shots more knockback and tumble.", settings.ExtremeRagdoll, CanRagdoll),
                 Slider("Throw speed", "Scale how fast the body launches along the floor.", settings.ThrowSpeed, enabled: CanRagdoll),
                 Slider("Vertical lift", "Scale how strongly the body launches up or down.", settings.Lift, enabled: CanRagdoll),
-                Slider("Spin", "Scale the amount of tumble when the body launches.", settings.Spin, enabled: CanRagdoll),
-                Switch("Push severed limbs", "Move loose limbs by walking into them.", settings.DebrisPush)
+                Slider("Spin", "Scale the amount of tumble when the body launches.", settings.Spin, enabled: CanRagdoll)
             }),
             new Section("System", new[]
             {
@@ -100,7 +99,7 @@ internal sealed class RedlinePanel
                 Slider("Gore sound volume", "Volume of bullet impacts, fresh wounds, cuts, reattachment, and stomps.", settings.CutVolume),
                 Switch("Diagnostic log", "Write detailed traces to UserData/Redline.verbose.log.", settings.DiagnosticLog),
                 Switch("F8 cut preview", "Preview a leg cut on a nearby enemy without dealing HP damage.", settings.ScenePreview),
-                Switch("F10 revival test", "Revive a corpse in the room, including permanent deaths.",
+                Switch("F10 revival test", "Revive a standard Replika corpse, including permanent deaths.",
                     settings.RevivalTest)
             })
         };

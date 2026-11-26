@@ -70,7 +70,7 @@ internal sealed partial class EnemyEffects
     }
 
     public static bool CanForceRevival(EnemyController target) =>
-        target && target.isActiveAndEnabled && target.animator && target.Preset
+        target && target.isActiveAndEnabled && target.animator && IsStandardReplika(target)
         && target.hitbox && target.agent && IsCorpse(target);
 
     public bool HasReachableLimb()

@@ -15,6 +15,7 @@
     <Reference Include="$(ManagedDir)\FMODUnity.dll" Private="false" />
     <Reference Include="$(ManagedDir)\AstarPathfindingProject.dll" Private="false" />
     <Reference Include="$(ManagedDir)\UnityEngine.CoreModule.dll;$(ManagedDir)\UnityEngine.PhysicsModule.dll;$(ManagedDir)\UnityEngine.AnimationModule.dll;$(ManagedDir)\UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.Physics2DModule.dll" Private="false" />
     <Reference Include="$(ManagedDir)\UnityEngine.IMGUIModule.dll;$(ManagedDir)\UnityEngine.ImageConversionModule.dll;$(ManagedDir)\UnityEngine.TextRenderingModule.dll;$(ManagedDir)\UnityEngine.UI.dll" Private="false" />
     <Reference Include="$(ManagedDir)\UnityEngine.UIModule.dll" Private="false" />
   </ItemGroup>

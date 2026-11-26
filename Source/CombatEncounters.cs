@@ -12,11 +12,14 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
     private readonly Dictionary<int, Room> evaluated = new();
     private readonly List<(EnemyController Actor, EnemyManager Manager)> extras = new();
     private readonly List<EnemyController> stock = new();
+    private bool networkedLogged;
+    private bool idleLogged;
     private Room room;
     private float readyAt;
 
     public void SceneChanged()
     {
+        idleLogged = false;
         extras.RemoveAll(extra => !extra.Actor);
         foreach (int id in new List<int>(evaluated.Keys))
             if (!evaluated[id]) evaluated.Remove(id);
@@ -27,9 +30,21 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
     {
         float rate = RedlineSettings.Read(settings.ReinforcementRate, 1f);
         if (rate <= 0f || !CombatWorld.Playing || !AstarPath.active)
+        {
+            if (!idleLogged)
+            {
+                idleLogged = true;
+                log($"reinforcements idle rate={rate} astar={AstarPath.active != null} {CombatWorld.DescribePlaying()}");
+            }
             return;
+        }
         if (CombatWorld.Networked)
         {
+            if (!networkedLogged)
+            {
+                networkedLogged = true;
+                log($"reinforcements standing down for multiplayer: {CombatWorld.Describe()}");
+            }
             if (extras.Count != 0)
             {
                 Dispose();
@@ -52,12 +67,25 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
 
         var player = PlayerState.player.transform.position;
         stock.Clear();
+        int candidates = 0;
         foreach (var target in current.GetComponentsInChildren<EnemyController>(false))
-            if (target && target.isActiveAndEnabled && EnemyEffects.IsStandardReplika(target) && target.agent
-                && target.hitbox && !target.customSleep && !string.IsNullOrEmpty(StockId(target)))
-                stock.Add(target);
+        {
+            if (!target || !target.isActiveAndEnabled || !EnemyEffects.IsStandardReplika(target) || !target.agent
+                || !target.hitbox || target.customSleep)
+                continue;
+            candidates++;
+            if (string.IsNullOrEmpty(StockId(target)))
+            {
+                log($"reinforcement source without save id type={target.Preset.Type}");
+                continue;
+            }
+            stock.Add(target);
+        }
         if (stock.Count == 0)
+        {
+            log($"reinforcements room={current.roomName} native=0/{candidates} extra=0");
             return;
+        }
         stock.Sort((a, b) => string.CompareOrdinal(StockId(a), StockId(b)));
         int budget = Mathf.Min(3, Mathf.CeilToInt(stock.Count * rate));
         int spawned = 0;
@@ -69,8 +97,11 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
                 break;
             var manager = source.GetComponentInParent<EnemyManager>();
             if (!manager || !manager.inOperation || manager.Kolibri || manager.enemies == null
-                || manager.initPos == null || manager.initRot == null || !manager.enemies.Contains(source))
+                || !manager.enemies.Contains(source))
+            {
+                log($"reinforcement skipped type={source.Preset.Type} room={current.roomName} manager={!manager} inOperation={manager?.inOperation} kolibri={manager?.Kolibri} listed={manager?.enemies?.Contains(source)}");
                 continue;
+            }
             string id = ReinforcementId + StockId(source);
             bool saved = SProgress.GetInt("enemy " + id + " hp", -1) >= 0;
             if (!saved && (!occupied || source.hitbox.HP <= 0 || source.queuedForRespawn || source.permadeath))
@@ -81,7 +112,7 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
             Spawn(source, manager, position, id);
             spawned++;
         }
-        log($"reinforcements room={current.roomName} native={stock.Count} extra={spawned}");
+        log($"reinforcements room={current.roomName} native={stock.Count}/{candidates} extra={spawned}");
     }
 
     private static string StockId(EnemyController target)
@@ -126,6 +157,7 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
             position = candidate;
             return true;
         }
+        log($"reinforcement no footing type={source.Preset.Type} room={room?.roomName}");
         return false;
     }
 
@@ -159,8 +191,10 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
             copy.transform.SetParent(source.transform.parent, true);
             copy.transform.SetPositionAndRotation(position, source.transform.rotation);
             copy.SetActive(true);
-            manager.initPos.Add(actor.transform, position);
-            manager.initRot.Add(actor.transform, actor.transform.localEulerAngles.y);
+            if (manager.initPos != null)
+                manager.initPos.Add(actor.transform, position);
+            if (manager.initRot != null)
+                manager.initRot.Add(actor.transform, actor.transform.localEulerAngles.y);
             manager.enemies.Add(actor);
             extras.Add((actor, manager));
             log($"reinforcement id={id} type={source.Preset.Type} position={Battlefield.Format(position)}");
@@ -199,37 +233,5 @@ internal sealed class CombatEncounters(RedlineSettings settings, Action<string> 
         manager.dead?.Remove(actor);
         manager.initPos?.Remove(actor.transform);
         manager.initRot?.Remove(actor.transform);
-    }
-}
-
-internal static class CombatWorld
-{
-    private static System.Reflection.PropertyInfo networkInstance, networkRole;
-    private static bool checkedNetwork;
-    private static int networkFrame = -1;
-    private static bool networked;
-
-    public static bool Playing => PlayerState.player && PlayerState.gameState == PlayerState.gameStates.play
-        && !PlayerState.noplayer && !PlayerState.paused && !PlayerState.pauseMenu && !PlayerState.menu
-        && !PlayerState.cutscene && !PlayerState.eventScreen && !PlayerState.gameOver;
-
-    public static bool Networked
-    {
-        get
-        {
-            if (networkFrame == Time.frameCount)
-                return networked;
-            if (!checkedNetwork)
-            {
-                var type = Type.GetType("SyncRADation.Networking.LanNetworkManager, SyncRADation");
-                networkInstance = type?.GetProperty("Instance");
-                networkRole = type?.GetProperty("Role");
-                checkedNetwork = true;
-            }
-            var network = networkInstance?.GetValue(null);
-            networked = network != null && networkRole?.GetValue(network)?.ToString() is "Host" or "Client";
-            networkFrame = Time.frameCount;
-            return networked;
-        }
     }
 }

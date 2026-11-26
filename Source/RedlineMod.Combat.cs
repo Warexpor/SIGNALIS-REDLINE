@@ -8,7 +8,6 @@ namespace Redline;
 public sealed partial class RedlineMod
 {
     private const string ShotgunRackMarker = "REDLINE/Shotgun/ReloadRack";
-    private static ItemPickup ammoPickup;
     private CombatEncounters combatEncounters;
     private ElsterInjuries elsterInjuries;
     private WeaponAudio weaponAudio;
@@ -21,9 +20,6 @@ public sealed partial class RedlineMod
         combatEncounters = new CombatEncounters(settings, Log);
         elsterInjuries = new ElsterInjuries(settings, skinMap, physics, blood, sounds, Log);
         weaponAudio = new WeaponAudio(settings, Log);
-        Hook(typeof(ItemPickup), nameof(ItemPickup.pickUp), nameof(AmmoPickupBegin), null, nameof(AmmoPickupEnd));
-        Hook(typeof(DynamicDifficulty), nameof(DynamicDifficulty.calculateCount), null, nameof(AmmoCount), null,
-            typeof(AnItem), typeof(int));
         Hook(typeof(PlayerState), nameof(PlayerState.damagePlayer), nameof(PlayerDamageBegin), nameof(PlayerDamageEnd), null,
             typeof(int), typeof(Vector2));
         Hook(typeof(PlayerState), nameof(PlayerState.healElster), null, nameof(PlayerRepaired));
@@ -40,49 +36,6 @@ public sealed partial class RedlineMod
         Hook(typeof(StudioEventEmitter), nameof(StudioEventEmitter.Play), nameof(StockPumpEmitter), null, null);
     }
 
-    private static void AmmoPickupBegin(ItemPickup __instance, out ItemPickup __state)
-    {
-        __state = ammoPickup;
-        ammoPickup = null;
-        if (!__instance || __instance.firstObserved || __instance.count <= 0 || !__instance._item
-            || !IsAmmo(__instance._item._item) || active.settings.AmmoBonus.Value <= 0)
-            return;
-        try
-        {
-            var id = __instance.GetComponent<UniqueId>();
-            if (id && !string.IsNullOrEmpty(id.id) && !CombatWorld.Networked
-                && SProgress.GetInt("count: " + id.id, -1) < 0)
-                ammoPickup = __instance;
-        }
-        catch (Exception ex) { active.WarnOnce("ammo pickup", ex); }
-    }
-
-    private static Exception AmmoPickupEnd(ItemPickup __state, Exception __exception)
-    {
-        ammoPickup = __state;
-        return __exception;
-    }
-
-    private static void AmmoCount(AnItem __0, ref int __result)
-    {
-        if (!ammoPickup || __0 != ammoPickup._item)
-            return;
-        // The next native calculation only formats a log message. The first result is assigned to the pickup.
-        var pickup = ammoPickup;
-        ammoPickup = null;
-        if (__result <= 0)
-            return;
-        int before = __result;
-        float bonus = RedlineSettings.Factor(active.settings.AmmoBonus);
-        __result += Mathf.CeilToInt(__result * bonus);
-        if (__result != before)
-            active.Log($"ammo pickup item={pickup._item._item} native={before} boosted={__result}");
-    }
-
-    private static bool IsAmmo(Items.itemlist item) => item is Items.itemlist.PistolAmmo or Items.itemlist.SmgAmmo
-        or Items.itemlist.ShotgunAmmo or Items.itemlist.RevolverAmmo or Items.itemlist.RifleAmmo
-        or Items.itemlist.FlakGunAmmo or Items.itemlist.FlareGunAmmo;
-
     private static void PlayerDamageBegin(out int __state) => __state = PlayerState.hp;
 
     private static void PlayerDamageEnd(int __state, Vector2 __1)
@@ -91,12 +44,23 @@ public sealed partial class RedlineMod
         catch (Exception ex) { active.WarnOnce("Ariane flash damage", ex); }
         try { active.elsterInjuries.Hit(__state, __1); }
         catch (Exception ex) { active.WarnOnce("Elster trauma", ex); }
+        try
+        {
+            // Her own blood lands on her suit, scaled by the hit. Healing washes it off.
+            int lost = __state - PlayerState.hp;
+            if (lost >= 6 && PlayerState.player)
+                active.elsterBlood.Queue(PlayerState.player.transform.position, lost >= 15, false,
+                    active.settings.BloodDensity * Mathf.Clamp(lost / 14f, 0.6f, 1.3f));
+        }
+        catch (Exception ex) { active.WarnOnce("Elster blood", ex); }
     }
 
     private static void PlayerRepaired()
     {
         try { active.elsterInjuries.OfferRepair(); }
         catch (Exception ex) { active.WarnOnce("Elster repair", ex); }
+        try { active.elsterBlood.Wash(); }
+        catch (Exception ex) { active.WarnOnce("Elster blood", ex); }
     }
 
     private static void CombatSaveLoaded()

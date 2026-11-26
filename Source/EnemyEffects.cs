@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Object = UnityEngine.Object;
 using Random = UnityEngine.Random;
 
 namespace Redline;
@@ -45,6 +46,8 @@ internal sealed partial class EnemyEffects
     private float previousAnimatorSpeed;
     private bool previousAnimationEvents;
     private int missing;
+    private bool magLooted;
+    private Items.itemlist? killerAmmo;
     private int impacts;
     private bool downed;
     private bool skinScanned;
@@ -101,6 +104,8 @@ internal sealed partial class EnemyEffects
         if (animator) originalCulling = animator.cullingMode;
         previous = target.transform.position;
         floor = FindFloor();
+        if (rig.Hips)
+            rig.ModelHeight = Mathf.Clamp(Battlefield.Height(rig.Hips.position) - floor, 4f, 18f);
         this.log($"tracked type={target.Preset.Type} rig={rig.CanRagdoll} crawlRig={rig.CanCrawl}");
     }
 
@@ -116,9 +121,12 @@ internal sealed partial class EnemyEffects
     public bool EnteredCrawl => enteredCrawl;
     // Kolibri's shorter torso needs a higher cut to clear the leg seams.
     private float WaistFraction => standardReplika ? 0.34f : 0.81f;
-    public static bool IsStandardReplika(EnemyController target) => target.Preset &&
-        target.Preset.Type is AnEnemy.AnEnemyType.EULR or AnEnemy.AnEnemyType.STAR
-            or AnEnemy.AnEnemyType.ARAR or AnEnemy.AnEnemyType.STCR;
+    public static bool IsStandardReplika(EnemyController target) => target.Preset && target.Preset.Type switch
+    {
+        AnEnemy.AnEnemyType.EULR or AnEnemy.AnEnemyType.STAR or AnEnemy.AnEnemyType.STCR => true,
+        AnEnemy.AnEnemyType.ARAR => !CombatWorld.IsBossMinion(target),
+        _ => false
+    };
 
     public static bool IsSupported(EnemyController target)
     {
@@ -204,7 +212,7 @@ internal sealed partial class EnemyEffects
     private bool CanSwipe() => !downed && knockdownPose == null && !HoldRevivalAi && Target.hitbox && Target.hitbox.HP > 0
         && Target.state is EnemyController.enemystate.pursuit or EnemyController.enemystate.attack
         && Target.staggerType == EnemyController.hurtState.none
-        && !PlayerState.paused && !PlayerState.menu && !PlayerState.eventScreen
+        && !PlayerState.paused && !PlayerState.eventScreen
         && !PlayerState.cutscene && !PlayerState.gameOver && !PlayerState.cloaked;
 
     private bool TrySwipeTarget(float range, float facingDot, out Vector3 playerPoint, out Vector3 facing)
@@ -345,6 +353,8 @@ internal sealed partial class EnemyEffects
         float impactFloor = ragdoll != null ? corpseSupportFloor : floor;
         blood.Spurt(center, ballistic ? shotDirection : direction, impactFloor, walls,
             amount, fall ? 54 : heavy ? 42 : 27, fall || heavy ? 1.10f : 0.83f, ballistic);
+        if (finalDeath && !preview && !proneHit)
+            TryDropMag();
         log($"impact n={impacts} hp={Target.hitbox.HP} damage={damage:F1} strength={strength:F2} rays={rays.Length} point={Battlefield.Format(center)} nativeState={Target.state} fall={fall} finalDeath={finalDeath} launch={launch} critical={critical} heavy={heavy} preHitPose={pose != null} preview={preview} dir={Battlefield.Format(direction)} floor={floor:F3} wallMask=0x{walls:X}");
 
         if (ragdoll != null && (!proneHit || !mayCut))
@@ -465,7 +475,8 @@ internal sealed partial class EnemyEffects
 
         bool ApplyCut(Part part, bool playSound = true)
         {
-            if (Missing(part) || !Sever(part, direction, heavy, launch, out var wound, out var outward, corpseOffset))
+            // Heavy final kills throw the part along the shot. Lighter cuts just drop it.
+            if (Missing(part) || !Sever(part, direction, heavy, launch || (heavy && finalDeath), out var wound, out var outward, corpseOffset))
                 return false;
             var spray = ballistic ? (shotDirection + outward * 0.18f).normalized
                 : (direction * 0.8f + outward * 0.65f).normalized;
@@ -508,6 +519,52 @@ internal sealed partial class EnemyEffects
             lastUnlocatedRoll = shotId;
         log($"cut unlocated shot={shotId} reserve={unlocatedDamage:F2} chance={decision.Chance:F2} roll={roll:F2} selected={decision.Part}");
         return decision;
+    }
+
+    private static Items.itemlist? KillerAmmoFor(Items.itemlist weapon) => weapon switch
+    {
+        Items.itemlist.Pistol => Items.itemlist.PistolAmmo,
+        Items.itemlist.SMG => Items.itemlist.SmgAmmo,
+        Items.itemlist.Shotgun => Items.itemlist.ShotgunAmmo,
+        Items.itemlist.Revolver => Items.itemlist.RevolverAmmo,
+        Items.itemlist.Rifle => Items.itemlist.RifleAmmo,
+        Items.itemlist.FlakGun => Items.itemlist.FlakGunAmmo,
+        Items.itemlist.FlareGun => Items.itemlist.FlareGunAmmo,
+        _ => null,
+    };
+
+    private static int MagRounds(Items.itemlist ammo) => ammo switch
+    {
+        Items.itemlist.PistolAmmo => 3,
+        Items.itemlist.SmgAmmo => 8,
+        Items.itemlist.ShotgunAmmo => 2,
+        Items.itemlist.RevolverAmmo => 2,
+        Items.itemlist.RifleAmmo => 2,
+        Items.itemlist.FlakGunAmmo => 1,
+        Items.itemlist.FlareGunAmmo => 1,
+        _ => 0,
+    };
+
+    public void NoteKillerAmmo(Items.itemlist weapon)
+    {
+        var ammo = KillerAmmoFor(weapon);
+        if (ammo.HasValue)
+            killerAmmo = ammo;
+    }
+
+    private void TryDropMag()
+    {
+        if (!settings.MagCaches.Value || magLooted || killerAmmo is not Items.itemlist ammo || MagRounds(ammo) <= 0)
+            return;
+        try
+        {
+            Vector3 spot = Target.stompInter && Target.stompInter.gameObject.activeInHierarchy
+                ? Target.stompInter.transform.position : Target.transform.position;
+            float ground = Battlefield.FloorBelow(spot, floor);
+            magLooted = MagCaches.TrySpawn(ammo, MagRounds(ammo), Battlefield.AtHeight(spot, ground + 0.08f),
+                Target.transform.parent, log);
+        }
+        catch (Exception ex) { log($"mag cache failed ammo={ammo}: {ex}"); }
     }
 
     public void Stomp(Rig.Snapshot pose, bool mayCut, bool mayRagdoll, BloodEffects blood, float amount, CutSounds sounds,
@@ -578,7 +635,10 @@ internal sealed partial class EnemyEffects
         }
         log($"stomp processed part={part} point={Battlefield.Format(contact)} crawl={crawlContact.HasValue} ragdoll={ragdoll != null}");
         if (Target.state == EnemyController.enemystate.dead && Target.hitbox && Target.hitbox.HP <= 0)
+        {
             elsterBlood.Queue(contact, true, true, amount);
+            TryDropMag();
+        }
     }
 
     private bool HitsWaist(ImpactCuts.Ray[] rays)
@@ -611,6 +671,18 @@ internal sealed partial class EnemyEffects
         {
             crawlDeathPose = pose ?? CapturePose();
             crawlDeathRoot = Target.transform.position;
+        }
+        if (!enteredCrawl && (missing & InjuryRules.Legs) == InjuryRules.Legs
+            && crawlDeathPose != null && ragdoll == null && waistSplit == null)
+        {
+            // Never fought as a crawler, so the captured pose is the standing
+            // or falling pose. Settle straight into the procedural death crawl
+            // instead of freezing mid-fall with no reaction.
+            rig.Crawl(Target.transform, floor, phase, 0f, 1f, true, true,
+                Missing(Part.LeftArm), Missing(Part.RightArm));
+            crawlDeathPose = rig.Capture();
+            crawlDeathRoot = Target.transform.position;
+            log("crawl death settled procedurally");
         }
         CancelSwipe();
         ReleaseCrawlInteraction();
@@ -658,6 +730,16 @@ internal sealed partial class EnemyEffects
         previous = position;
         bool killed = Target.state == EnemyController.enemystate.dead;
         bool alive = !killed && Target.hitbox && Target.hitbox.HP > 0;
+        if (alive && (missing & InjuryRules.Legs) == 0 && rig.Hips)
+            rig.ModelHeight = Mathf.Clamp(Battlefield.Height(rig.Hips.position) - floor, 4f, 18f);
+        if (alive && !downed && !NativeDowned && ragdoll == null && waistSplit == null && crawlDeathPose == null
+            && revivalStage == RevivalStage.None && animationHeld)
+        {
+            // Nothing legitimate still holds the animator here. A missed release
+            // leaves the legs frozen while the agent keeps walking the body.
+            log("native animator resumed by watchdog");
+            ReleaseUnusedAnimation();
+        }
         if (alive && downed && KeepFatalCutDead())
         {
             killed = true;
@@ -673,6 +755,7 @@ internal sealed partial class EnemyEffects
             Array.Clear(partDamage, 0, partDamage.Length);
             unlocatedDamage = 0;
             downed = false;
+            magLooted = false;
             poolScale = 0;
         }
         PrepareKnockdownCrawl(alive, mayCrawl, position);
